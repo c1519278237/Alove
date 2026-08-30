@@ -1,0 +1,101 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import 'core/session.dart';
+import 'features/auth/family_setup_screen.dart';
+import 'features/auth/login_screen.dart';
+import 'features/conversation/conversation_screen.dart';
+import 'features/home/child_home_screen.dart';
+import 'features/home/elder_home_screen.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const ProviderScope(child: GuiyinApp()));
+}
+
+class GuiyinApp extends ConsumerWidget {
+  const GuiyinApp({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final session = ref.watch(sessionProvider);
+    final router = GoRouter(
+      initialLocation: '/login',
+      redirect: (context, state) {
+        if (session.loading) return '/loading';
+        if (!session.isAuthenticated) return '/login';
+        if (!session.hasFamily) return '/family-setup';
+        if (state.matchedLocation == '/login' ||
+            state.matchedLocation == '/loading' ||
+            state.matchedLocation == '/family-setup') {
+          return session.isElder ? '/elder' : '/child';
+        }
+        return null;
+      },
+      routes: [
+        GoRoute(
+          path: '/loading',
+          builder: (context, state) => const _LoadingScreen(),
+        ),
+        GoRoute(
+          path: '/login',
+          builder: (context, state) => const LoginScreen(),
+        ),
+        GoRoute(
+          path: '/family-setup',
+          builder: (context, state) => const FamilySetupScreen(),
+        ),
+        GoRoute(
+          path: '/elder',
+          builder: (context, state) => const ElderHomeScreen(),
+        ),
+        GoRoute(
+          path: '/child',
+          builder: (context, state) => const ChildHomeScreen(),
+        ),
+        GoRoute(
+          path: '/conversation',
+          builder: (context, state) => const ConversationScreen(),
+        ),
+      ],
+    );
+
+    return MaterialApp.router(
+      title: '归音',
+      debugShowCheckedModeBanner: false,
+      routerConfig: router,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF1C8585),
+          primary: const Color(0xFF176B7A),
+          secondary: const Color(0xFFE9A23B),
+          surface: const Color(0xFFF7FAFA),
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF7FAFA),
+        useMaterial3: true,
+        textTheme: const TextTheme(
+          bodyLarge: TextStyle(fontSize: 20, height: 1.5),
+          bodyMedium: TextStyle(fontSize: 17, height: 1.5),
+          titleLarge: TextStyle(fontSize: 26, fontWeight: FontWeight.w700),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            minimumSize: const Size.fromHeight(56),
+            textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LoadingScreen extends StatelessWidget {
+  const _LoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  }
+}
+

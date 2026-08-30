@@ -1,0 +1,26 @@
+name: guiyin_mobile
+description: 归音——面向老人和家庭成员的双向情感协同 AI App
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^2.6.1
+  go_router: ^14.8.1
+  dio: ^5.8.0+1
+  flutter_secure_storage: ^9.2.4
+  speech_to_text: ^7.0.0
+  flutter_tts: ^4.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+

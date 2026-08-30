@@ -1,0 +1,25 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+*.db
+*.sqlite3
+coverage.xml
+htmlcov/
+.dart_tool/
+.flutter-plugins*
+.packages
+build/
+android/local.properties
+ios/Flutter/Generated.xcconfig
+qa/
+.codex_deps/
+
+# Never commit real user exports, audio, consent evidence, or production backups.
+data/
+uploads/
+backups/
+~$*

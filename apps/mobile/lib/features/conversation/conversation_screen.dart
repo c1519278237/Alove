@@ -1,0 +1,227 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:speech_to_text/speech_recognition_result.dart';
+import 'package:speech_to_text/speech_to_text.dart';
+
+import '../../core/session.dart';
+
+class ConversationScreen extends ConsumerStatefulWidget {
+  const ConversationScreen({super.key});
+
+  @override
+  ConsumerState<ConversationScreen> createState() => _ConversationScreenState();
+}
+
+class _ChatBubble {
+  const _ChatBubble(this.text, {required this.fromUser});
+
+  final String text;
+  final bool fromUser;
+}
+
+class _ConversationScreenState extends ConsumerState<ConversationScreen> {
+  final _input = TextEditingController();
+  final _speech = SpeechToText();
+  final _tts = FlutterTts();
+  final _messages = <_ChatBubble>[];
+  String? _conversationId;
+  bool _busy = true;
+  bool _listening = false;
+  bool _shareSummary = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _startConversation();
+    _tts.setLanguage('zh-CN');
+    _tts.setSpeechRate(0.45);
+  }
+
+  @override
+  void dispose() {
+    _input.dispose();
+    _speech.stop();
+    _tts.stop();
+    super.dispose();
+  }
+
+  Future<void> _startConversation() async {
+    try {
+      final familyId = ref.read(sessionProvider).familyId!;
+      final result = await ref.read(apiClientProvider).createConversation(familyId);
+      setState(() {
+        _conversationId = result['id'] as String;
+        _busy = false;
+        _messages.add(
+          const _ChatBubble(
+            '我是归音 AI 助手，不是真实家人。您想聊聊天，还是需要我帮您整理一件事？',
+            fromUser: false,
+          ),
+        );
+      });
+    } catch (error) {
+      setState(() {
+        _busy = false;
+        _error = error.toString();
+      });
+    }
+  }
+
+  Future<void> _toggleListening() async {
+    if (_listening) {
+      await _speech.stop();
+      setState(() => _listening = false);
+      if (_input.text.trim().isNotEmpty) await _send();
+      return;
+    }
+    final available = await _speech.initialize();
+    if (!available) {
+      setState(() => _error = '手机语音识别不可用，请使用文字输入。');
+      return;
+    }
+    setState(() {
+      _listening = true;
+      _error = null;
+    });
+    await _speech.listen(
+      localeId: 'zh_CN',
+      onResult: (SpeechRecognitionResult result) {
+        setState(() => _input.text = result.recognizedWords);
+      },
+    );
+  }
+
+  Future<void> _send() async {
+    final text = _input.text.trim();
+    if (text.isEmpty || _conversationId == null || _busy) return;
+    setState(() {
+      _messages.add(_ChatBubble(text, fromUser: true));
+      _input.clear();
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final result = await ref
+          .read(apiClientProvider)
+          .sendMessage(_conversationId!, text);
+      final assistant = result['assistant_message'] as Map<String, dynamic>;
+      final responseText = assistant['text'] as String;
+      setState(() => _messages.add(_ChatBubble(responseText, fromUser: false)));
+      await _tts.speak(responseText);
+    } catch (error) {
+      setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _setSharing(bool value) async {
+    if (_conversationId == null) return;
+    try {
+      await ref.read(apiClientProvider).setConversationSharing(
+            _conversationId!,
+            value ? 'family_summary' : 'private',
+          );
+      setState(() => _shareSummary = value);
+    } catch (error) {
+      setState(() => _error = error.toString());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('和归音对话')),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Container(
+              width: double.infinity,
+              color: const Color(0xFFE6F3F1),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: const Text(
+                '当前正在与 AI 助手对话 · 重要事情请联系真实家人',
+                textAlign: TextAlign.center,
+              ),
+            ),
+            SwitchListTile(
+              title: const Text('允许本次对话用于家庭关怀摘要'),
+              subtitle: const Text('只生成主题和需求摘要，不向家人展示完整对话'),
+              value: _shareSummary,
+              onChanged: _conversationId == null ? null : _setSharing,
+            ),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: _messages.length,
+                itemBuilder: (context, index) {
+                  final message = _messages[index];
+                  return Align(
+                    alignment: message.fromUser
+                        ? Alignment.centerRight
+                        : Alignment.centerLeft,
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 520),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: message.fromUser
+                            ? const Color(0xFFDCEAF5)
+                            : Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: const Color(0xFFD5E0E3)),
+                      ),
+                      child: Text(message.text, style: const TextStyle(fontSize: 20)),
+                    ),
+                  );
+                },
+              ),
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(_error!, style: const TextStyle(color: Colors.red)),
+              ),
+            if (_busy) const LinearProgressIndicator(),
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  IconButton.filled(
+                    onPressed: _busy ? null : _toggleListening,
+                    tooltip: _listening ? '结束说话' : '按下说话',
+                    iconSize: 34,
+                    icon: Icon(_listening ? Icons.stop : Icons.mic),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: _input,
+                      minLines: 1,
+                      maxLines: 3,
+                      style: const TextStyle(fontSize: 19),
+                      decoration: const InputDecoration(
+                        hintText: '也可以在这里打字',
+                        border: OutlineInputBorder(),
+                      ),
+                      onSubmitted: (_) => _send(),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  IconButton.filledTonal(
+                    onPressed: _busy ? null : _send,
+                    tooltip: '发送',
+                    iconSize: 32,
+                    icon: const Icon(Icons.send),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
