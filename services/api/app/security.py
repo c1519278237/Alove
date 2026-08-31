@@ -44,6 +44,14 @@ def decrypt_text(value: str | None) -> str | None:
         return "[无法解密]"
 
 
+def encrypt_bytes(value: bytes) -> bytes:
+    return _fernet().encrypt(value)
+
+
+def decrypt_bytes(value: bytes) -> bytes:
+    return _fernet().decrypt(value)
+
+
 def normalize_phone(phone: str) -> str:
     normalized = "".join(ch for ch in phone.strip() if ch.isdigit() or ch == "+")
     if len(normalized.replace("+", "")) < 6:

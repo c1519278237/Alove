@@ -25,7 +25,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _requestCode() async {
-    final debugCode = await ref.read(sessionProvider.notifier).requestSms(_phone.text);
+    final debugCode =
+        await ref.read(sessionProvider.notifier).requestSms(_phone.text);
     if (!mounted) return;
     setState(() {
       _codeRequested = true;
@@ -94,7 +95,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   ],
                   if (session.error != null) ...[
                     const SizedBox(height: 12),
-                    Text(session.error!, style: const TextStyle(color: Colors.red)),
+                    Text(session.error!,
+                        style: const TextStyle(color: Colors.red)),
                   ],
                   const SizedBox(height: 24),
                   FilledButton(
@@ -130,4 +132,3 @@ class _AiNotice extends StatelessWidget {
     );
   }
 }
-

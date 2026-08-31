@@ -1,3 +1,4 @@
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -34,6 +35,26 @@ class ElderHomeScreen extends ConsumerWidget {
               child: Text('和归音说说话'),
             ),
           ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: () => context.push('/care-need'),
+                  icon: const Icon(Icons.volunteer_activism),
+                  label: const Text('请家人帮忙'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: () => context.push('/elder-manage'),
+                  icon: const Icon(Icons.privacy_tip),
+                  label: const Text('授权与记忆'),
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 24),
           _HomeSection(
             icon: Icons.mark_unread_chat_alt_outlined,
@@ -41,6 +62,24 @@ class ElderHomeScreen extends ConsumerWidget {
             loader: () => ref.read(apiClientProvider).inbox(),
             emptyText: '暂时没有新留言',
             itemText: (item) => item['content']?.toString() ?? '一条家人留言',
+            actionLabel: (item) {
+              if (item['type'] == 'audio' && item['audio_object_key'] != null) {
+                return '播放';
+              }
+              return item['played_at'] == null ? '我看到了' : null;
+            },
+            onAction: (item) async {
+              final api = ref.read(apiClientProvider);
+              if (item['type'] == 'audio' && item['audio_object_key'] != null) {
+                final bytes = await api.downloadMedia(
+                  item['audio_object_key'] as String,
+                );
+                final player = AudioPlayer();
+                await player.play(BytesSource(bytes));
+                player.onPlayerComplete.first.then((_) => player.dispose());
+              }
+              await api.markMessagePlayed(item['id'] as String);
+            },
           ),
           const SizedBox(height: 18),
           _HomeSection(
@@ -49,10 +88,28 @@ class ElderHomeScreen extends ConsumerWidget {
             loader: () => ref.read(apiClientProvider).reminders(),
             emptyText: '今天没有待办提醒',
             itemText: (item) => item['content']?.toString() ?? '一条提醒',
+            actionLabel: (item) => item['status'] == 'active' ? '我完成了' : null,
+            onAction: (item) async {
+              await ref
+                  .read(apiClientProvider)
+                  .reminderAction(item['id'] as String, 'confirmed');
+            },
           ),
           const SizedBox(height: 24),
           OutlinedButton.icon(
-            onPressed: () {},
+            onPressed: () => showDialog<void>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('联系真实家人'),
+                content: const Text('请使用手机通讯录拨打家人的真实号码。归音不会冒充家人拨打电话。'),
+                actions: [
+                  FilledButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('知道了'),
+                  ),
+                ],
+              ),
+            ),
             icon: const Icon(Icons.phone, size: 28),
             label: const Padding(
               padding: EdgeInsets.all(12),
@@ -101,6 +158,8 @@ class _HomeSection extends StatefulWidget {
     required this.loader,
     required this.emptyText,
     required this.itemText,
+    required this.actionLabel,
+    required this.onAction,
   });
 
   final IconData icon;
@@ -108,6 +167,8 @@ class _HomeSection extends StatefulWidget {
   final Future<List<Map<String, dynamic>>> Function() loader;
   final String emptyText;
   final String Function(Map<String, dynamic>) itemText;
+  final String? Function(Map<String, dynamic>) actionLabel;
+  final Future<void> Function(Map<String, dynamic>) onAction;
 
   @override
   State<_HomeSection> createState() => _HomeSectionState();
@@ -115,11 +176,22 @@ class _HomeSection extends StatefulWidget {
 
 class _HomeSectionState extends State<_HomeSection> {
   late Future<List<Map<String, dynamic>>> _future;
+  bool _busy = false;
 
   @override
   void initState() {
     super.initState();
     _future = widget.loader();
+  }
+
+  Future<void> _runAction(Map<String, dynamic> item) async {
+    setState(() => _busy = true);
+    try {
+      await widget.onAction(item);
+      if (mounted) setState(() => _future = widget.loader());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
@@ -134,7 +206,8 @@ class _HomeSectionState extends State<_HomeSection> {
               children: [
                 Icon(widget.icon, size: 30),
                 const SizedBox(width: 10),
-                Text(widget.title, style: Theme.of(context).textTheme.titleLarge),
+                Text(widget.title,
+                    style: Theme.of(context).textTheme.titleLarge),
               ],
             ),
             const SizedBox(height: 12),
@@ -159,6 +232,13 @@ class _HomeSectionState extends State<_HomeSection> {
                             widget.itemText(item),
                             style: const TextStyle(fontSize: 18),
                           ),
+                          trailing: widget.actionLabel(item) == null
+                              ? const Icon(Icons.check, color: Colors.green)
+                              : FilledButton.tonal(
+                                  onPressed:
+                                      _busy ? null : () => _runAction(item),
+                                  child: Text(widget.actionLabel(item)!),
+                                ),
                         ),
                       )
                       .toList(),
@@ -171,4 +251,3 @@ class _HomeSectionState extends State<_HomeSection> {
     );
   }
 }
-

@@ -18,17 +18,35 @@ class Settings(BaseSettings):
     app_secret_key: str = "guiyin-local-secret-change-me"
     app_encryption_key: str | None = None
     database_url: str = "sqlite:///./guiyin.db"
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:8080"])
+    media_storage_dir: str = "./data/media"
+    media_max_bytes: int = 10 * 1024 * 1024
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+        ]
+    )
 
-    ai_provider: str = "openai_compatible"
-    ai_base_url: str = "https://api.openai.com/v1"
+    ai_provider: str = "deepseek"
+    ai_base_url: str = "https://api.deepseek.com/v1"
     ai_api_key: str | None = None
-    ai_model: str = "gpt-4.1-mini"
+    ai_model: str = "deepseek-chat"
     ai_timeout_seconds: float = 30.0
+    ai_max_tokens: int = 800
+    ai_temperature: float = 0.35
+    ai_input_cost_per_million_usd: float = 0.0
+    ai_output_cost_per_million_usd: float = 0.0
 
     sms_provider: str = "console"
+    sms_webhook_url: str | None = None
+    sms_webhook_token: str | None = None
+    sms_timeout_seconds: float = 10.0
+    sms_min_interval_seconds: int = 60
+    sms_hourly_limit: int = 10
     sms_code_ttl_seconds: int = 300
     access_token_ttl_minutes: int = 60
+    background_jobs_enabled: bool = True
+    report_scheduler_interval_seconds: int = 3600
 
     @field_validator("cors_origins", mode="before")
     @classmethod

@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -9,15 +10,19 @@ from fastapi.responses import JSONResponse
 from .config import get_settings
 from .database import create_schema
 from .errors import AppError
+from .jobs import care_report_scheduler
 from .routers import (
+    admin,
     auth,
     care,
     consents,
     conversations,
     families,
     knowledge,
+    media,
     realtime,
     reminders,
+    styles,
     voice,
 )
 from .schemas import HealthOut
@@ -30,13 +35,22 @@ async def lifespan(_: FastAPI):
     if not settings.is_local and settings.app_secret_key == "guiyin-local-secret-change-me":
         raise RuntimeError("Non-local deployments must configure APP_SECRET_KEY")
     create_schema()
+    scheduler_task = None
+    if settings.background_jobs_enabled and settings.app_env != "test":
+        scheduler_task = asyncio.create_task(
+            care_report_scheduler(settings.report_scheduler_interval_seconds)
+        )
     yield
+    if scheduler_task is not None:
+        scheduler_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await scheduler_task
 
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.1.0",
-    description="归音家庭情感协同 AI App MVP API",
+    version="0.2.0",
+    description="归音家庭情感协同 AI App 本地完整 MVP API",
     lifespan=lifespan,
 )
 app.add_middleware(
@@ -54,6 +68,12 @@ async def trace_middleware(request: Request, call_next):
     request.state.trace_id = trace_id
     response = await call_next(request)
     response.headers["X-Trace-ID"] = trace_id
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), geolocation=()"
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 
@@ -93,7 +113,7 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 
 @app.get("/health", response_model=HealthOut, tags=["system"])
 def health() -> HealthOut:
-    provider = "openai_compatible" if settings.ai_api_key else "demo"
+    provider = settings.ai_provider if settings.ai_api_key else "demo"
     return HealthOut(status="ok", environment=settings.app_env, ai_provider=provider)
 
 
@@ -105,6 +125,9 @@ app.include_router(consents.router, prefix=API_PREFIX)
 app.include_router(conversations.router, prefix=API_PREFIX)
 app.include_router(realtime.router, prefix=API_PREFIX)
 app.include_router(knowledge.router, prefix=API_PREFIX)
+app.include_router(media.router, prefix=API_PREFIX)
 app.include_router(care.router, prefix=API_PREFIX)
 app.include_router(reminders.router, prefix=API_PREFIX)
 app.include_router(voice.router, prefix=API_PREFIX)
+app.include_router(styles.router, prefix=API_PREFIX)
+app.include_router(admin.router, prefix=API_PREFIX)

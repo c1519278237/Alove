@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -24,6 +25,22 @@ def _voice_out(profile: VoiceProfile) -> VoiceProfileOut:
         watermark_config=profile.watermark_config,
         created_at=profile.created_at,
     )
+
+
+@router.get("/voice-profiles", response_model=list[VoiceProfileOut])
+def list_voice_profiles(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> list[VoiceProfileOut]:
+    rows = db.scalars(
+        select(VoiceProfile)
+        .where(VoiceProfile.status != "revoked")
+        .order_by(VoiceProfile.created_at.desc())
+    ).all()
+    return [
+        _voice_out(row)
+        for row in rows
+        if row.owner_user_id == user.id or user.id in row.allowed_recipient_ids
+    ]
 
 
 @router.post("/voice-profiles/enrollment", response_model=VoiceProfileOut, status_code=201)

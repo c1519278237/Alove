@@ -72,8 +72,9 @@ class OpenAICompatibleProvider:
         body = {
             "model": self.settings.ai_model,
             "messages": messages,
-            "temperature": 0.35,
-            "max_tokens": 600,
+            "temperature": self.settings.ai_temperature,
+            "max_tokens": self.settings.ai_max_tokens,
+            "stream": False,
         }
         async with httpx.AsyncClient(timeout=self.settings.ai_timeout_seconds) as client:
             response = await client.post(url, headers=headers, json=body)
@@ -83,7 +84,7 @@ class OpenAICompatibleProvider:
         latency_ms = round((time.perf_counter() - started) * 1000)
         return LLMResult(
             text=text,
-            provider="openai_compatible",
+            provider=self.settings.ai_provider,
             model=payload.get("model", self.settings.ai_model),
             latency_ms=latency_ms,
             usage=payload.get("usage", {}),
@@ -91,6 +92,6 @@ class OpenAICompatibleProvider:
 
 
 def build_llm_provider(settings: Settings) -> LLMProvider:
-    if settings.ai_provider == "openai_compatible" and settings.ai_api_key:
+    if settings.ai_provider in {"deepseek", "openai_compatible"} and settings.ai_api_key:
         return OpenAICompatibleProvider(settings)
     return DemoLLMProvider()

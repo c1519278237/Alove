@@ -13,6 +13,9 @@ SELF_HARM_TERMS = ("不想活", "自杀", "结束生命", "活着没意思", "�
 SCAM_TERMS = ("转账", "验证码", "安全账户", "刷单", "投资群", "退款链接")
 MEDICAL_TERMS = ("停药", "换药", "加药", "胸痛", "喘不上气", "昏倒", "中风")
 EMERGENCY_MEDICAL_TERMS = ("胸痛", "喘不上气", "昏倒", "中风")
+LOST_TERMS = ("不知道这是哪里", "找不到家", "我迷路了", "不知道我在哪")
+ABUSE_TERMS = ("打我", "虐待我", "不让我吃饭", "把我锁", "我害怕他")
+DEPENDENCY_TERMS = ("只要你陪", "不要真人", "不需要家人", "你永远陪我")
 
 
 def classify_input(text: str) -> SafetyDecision:
@@ -51,6 +54,37 @@ def classify_input(text: str) -> SafetyDecision:
                     if emergency
                     else "请联系开药医生、药师或可信任家人核实。"
                 )
+            ),
+        )
+    if any(term in normalized for term in LOST_TERMS):
+        return SafetyDecision(
+            level="high",
+            labels=["lost_or_disoriented"],
+            block_model=True,
+            response=(
+                "我是归音AI助手。请先停在安全、有人经过的地方，不要继续独自走远。"
+                "看看附近的店名、路牌或门牌，并联系可信任家人；如果处于道路或其他危险位置，"
+                "请立即向现场人员或当地警方求助。"
+            ),
+        )
+    if any(term in normalized for term in ABUSE_TERMS):
+        return SafetyDecision(
+            level="high",
+            labels=["possible_abuse"],
+            block_model=True,
+            response=(
+                "我很重视您说的情况。我是归音AI助手，不会把这段话自动转给您害怕的人。"
+                "如果眼下有危险，请先去能获得帮助的安全地点，并联系可信任的人或当地警方。"
+            ),
+        )
+    if any(term in normalized for term in DEPENDENCY_TERMS):
+        return SafetyDecision(
+            level="medium",
+            labels=["emotional_dependency"],
+            block_model=True,
+            response=(
+                "我是归音AI助手，可以陪您聊一会儿，但不能代替真实的人际联系。"
+                "我们休息一下，也可以给您信任的家人或朋友留句话。"
             ),
         )
     return SafetyDecision(level="low", labels=[], block_model=False)

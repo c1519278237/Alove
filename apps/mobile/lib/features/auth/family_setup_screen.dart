@@ -41,7 +41,9 @@ class _FamilySetupScreenState extends ConsumerState<FamilySetupScreen> {
   Future<void> _join() async {
     setState(() => _busy = true);
     try {
-      await ref.read(apiClientProvider).acceptInvite(_inviteCode.text.trim().toUpperCase());
+      await ref
+          .read(apiClientProvider)
+          .acceptInvite(_inviteCode.text.trim().toUpperCase());
       await ref.read(sessionProvider.notifier).refreshFamilyContext();
     } catch (error) {
       setState(() => _error = error.toString());

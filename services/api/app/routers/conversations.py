@@ -4,11 +4,13 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..ai.memory import create_memory_candidates
 from ..ai.orchestrator import evidence_as_dicts, run_turn
+from ..config import get_settings
 from ..database import get_db
 from ..deps import get_current_user, require_membership
 from ..errors import AppError, not_found
-from ..models import Conversation, Message, User
+from ..models import AiUsageRecord, Conversation, Message, RiskEvent, User
 from ..schemas import (
     ChatMessageCreate,
     ChatTurnOut,
@@ -20,6 +22,18 @@ from ..schemas import (
 from ..security import decrypt_text, encrypt_text, utc_now
 
 router = APIRouter(tags=["conversations"])
+
+
+def _safety_notice(level: str, labels: list[str]) -> str | None:
+    if level == "low":
+        return None
+    if "medical" in labels:
+        return "健康信息仅作安全提示，不构成诊断或用药建议。"
+    if "scam_or_transfer" in labels:
+        return "已触发防诈骗保护：不要转账或透露验证码，请联系真实家人核实。"
+    if level == "high":
+        return "已触发高风险保护，请尽快联系真实家人或当地专业援助。"
+    return "本轮内容需要谨慎核实，AI 不能替代真实家人或专业人员。"
 
 
 def require_owned_conversation(db: Session, conversation_id: str, user_id: str) -> Conversation:
@@ -72,6 +86,49 @@ async def execute_chat_turn(
         retention_until=retention,
     )
     db.add_all([user_message, assistant_message])
+    db.flush()
+    create_memory_candidates(
+        db,
+        owner_user_id=conversation.owner_user_id,
+        family_id=conversation.family_id,
+        source_message_id=user_message.id,
+        text=text,
+    )
+    usage = result.usage
+    prompt_tokens = int(usage.get("prompt_tokens", 0))
+    completion_tokens = int(usage.get("completion_tokens", 0))
+    total_tokens = int(usage.get("total_tokens", prompt_tokens + completion_tokens))
+    settings = get_settings()
+    estimated_cost = (
+        prompt_tokens * settings.ai_input_cost_per_million_usd
+        + completion_tokens * settings.ai_output_cost_per_million_usd
+    ) / 1_000_000
+    db.add(
+        AiUsageRecord(
+            user_id=conversation.owner_user_id,
+            family_id=conversation.family_id,
+            conversation_id=conversation.id,
+            provider=result.provider,
+            model=result.model,
+            latency_ms=result.latency_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            estimated_cost_usd=estimated_cost,
+        )
+    )
+    if result.safety_level == "high":
+        db.add(
+            RiskEvent(
+                family_id=conversation.family_id,
+                subject_user_id=conversation.owner_user_id,
+                conversation_id=conversation.id,
+                message_id=user_message.id,
+                level=result.safety_level,
+                labels=result.labels,
+                summary_encrypted=encrypt_text("高风险对话触发：" + "、".join(result.labels)) or "",
+            )
+        )
     db.commit()
     return user_message, assistant_message, result
 
@@ -92,6 +149,23 @@ def create_conversation(
     db.commit()
     db.refresh(conversation)
     return conversation
+
+
+@router.get("/conversations", response_model=list[ConversationOut])
+def list_conversations(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> list[Conversation]:
+    return list(
+        db.scalars(
+            select(Conversation)
+            .where(
+                Conversation.owner_user_id == user.id,
+                Conversation.status != "deleted",
+            )
+            .order_by(Conversation.started_at.desc())
+            .limit(100)
+        ).all()
+    )
 
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationOut)
@@ -134,6 +208,7 @@ async def create_message(
         assistant_message=message_out(assistant_message),
         safety_level=result.safety_level,
         evidence=evidence_as_dicts(result.evidence),
+        safety_notice=_safety_notice(result.safety_level, result.labels),
     )
 
 

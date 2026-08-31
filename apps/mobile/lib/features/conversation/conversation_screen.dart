@@ -14,10 +14,17 @@ class ConversationScreen extends ConsumerStatefulWidget {
 }
 
 class _ChatBubble {
-  const _ChatBubble(this.text, {required this.fromUser});
+  const _ChatBubble(
+    this.text, {
+    required this.fromUser,
+    this.safetyNotice,
+    this.sources = const [],
+  });
 
   final String text;
   final bool fromUser;
+  final String? safetyNotice;
+  final List<Map<String, dynamic>> sources;
 }
 
 class _ConversationScreenState extends ConsumerState<ConversationScreen> {
@@ -50,7 +57,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   Future<void> _startConversation() async {
     try {
       final familyId = ref.read(sessionProvider).familyId!;
-      final result = await ref.read(apiClientProvider).createConversation(familyId);
+      final result =
+          await ref.read(apiClientProvider).createConversation(familyId);
       setState(() {
         _conversationId = result['id'] as String;
         _busy = false;
@@ -86,10 +94,15 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       _error = null;
     });
     await _speech.listen(
-      localeId: 'zh_CN',
       onResult: (SpeechRecognitionResult result) {
         setState(() => _input.text = result.recognizedWords);
       },
+      listenOptions: SpeechListenOptions(
+        localeId: 'zh_CN',
+        listenMode: ListenMode.dictation,
+        partialResults: true,
+        cancelOnError: true,
+      ),
     );
   }
 
@@ -103,17 +116,48 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       _error = null;
     });
     try {
-      final result = await ref
-          .read(apiClientProvider)
-          .sendMessage(_conversationId!, text);
+      final result =
+          await ref.read(apiClientProvider).sendMessage(_conversationId!, text);
       final assistant = result['assistant_message'] as Map<String, dynamic>;
       final responseText = assistant['text'] as String;
-      setState(() => _messages.add(_ChatBubble(responseText, fromUser: false)));
+      final sources = (result['evidence'] as List<dynamic>? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+      setState(
+        () => _messages.add(
+          _ChatBubble(
+            responseText,
+            fromUser: false,
+            safetyNotice: result['safety_notice'] as String?,
+            sources: sources,
+          ),
+        ),
+      );
       await _tts.speak(responseText);
     } catch (error) {
       setState(() => _error = error.toString());
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _endConversation() async {
+    if (_conversationId == null) {
+      if (mounted) Navigator.of(context).pop();
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await ref.read(apiClientProvider).endConversation(_conversationId!);
+      if (mounted) Navigator.of(context).pop();
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = error.toString();
+        });
+      }
     }
   }
 
@@ -133,7 +177,16 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('和归音对话')),
+      appBar: AppBar(
+        title: const Text('和归音对话'),
+        actions: [
+          TextButton.icon(
+            onPressed: _busy ? null : _endConversation,
+            icon: const Icon(Icons.check_circle_outline),
+            label: const Text('结束'),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: Column(
           children: [
@@ -173,7 +226,37 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(color: const Color(0xFFD5E0E3)),
                       ),
-                      child: Text(message.text, style: const TextStyle(fontSize: 20)),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            message.text,
+                            style: const TextStyle(fontSize: 20),
+                          ),
+                          if (message.safetyNotice != null) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              message.safetyNotice!,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.error,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                          if (message.sources.isNotEmpty) ...[
+                            const Divider(height: 24),
+                            Text(
+                              '参考了 ${message.sources.length} 条已授权家庭资料',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                            for (final source in message.sources.take(3))
+                              Text(
+                                '• ${source['title'] ?? source['source_type'] ?? '家庭资料'}',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                          ],
+                        ],
+                      ),
                     ),
                   );
                 },

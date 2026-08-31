@@ -157,6 +157,19 @@ class KnowledgeDocument(Base, TimestampMixin):
     )
 
 
+class KnowledgeChunk(Base, TimestampMixin):
+    __tablename__ = "knowledge_chunks"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_documents.id"), index=True
+    )
+    family_id: Mapped[str] = mapped_column(ForeignKey("families.id"), index=True)
+    chunk_index: Mapped[int]
+    content_encrypted: Mapped[str] = mapped_column(Text)
+    token_count: Mapped[int] = mapped_column(default=0)
+    status: Mapped[str] = mapped_column(String(24), default="active")
+
+
 class Memory(Base, TimestampMixin):
     __tablename__ = "memories"
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
@@ -213,6 +226,15 @@ class Reminder(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(30), default="active")
 
 
+class ReminderEvent(Base, TimestampMixin):
+    __tablename__ = "reminder_events"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    reminder_id: Mapped[str] = mapped_column(ForeignKey("reminders.id"), index=True)
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    action: Mapped[str] = mapped_column(String(30))
+    note_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class FamilyMessage(Base, TimestampMixin):
     __tablename__ = "family_messages"
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
@@ -222,6 +244,17 @@ class FamilyMessage(Base, TimestampMixin):
     content_encrypted: Mapped[str] = mapped_column(Text)
     audio_object_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     played_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MediaObject(Base, TimestampMixin):
+    __tablename__ = "media_objects"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    storage_key: Mapped[str] = mapped_column(String(500), unique=True)
+    mime_type: Mapped[str] = mapped_column(String(100))
+    original_name: Mapped[str] = mapped_column(String(255), default="audio")
+    size_bytes: Mapped[int]
+    status: Mapped[str] = mapped_column(String(24), default="active", index=True)
 
 
 class VoiceProfile(Base, TimestampMixin):
@@ -238,6 +271,66 @@ class VoiceProfile(Base, TimestampMixin):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class StyleProfile(Base, TimestampMixin):
+    __tablename__ = "style_profiles"
+    __table_args__ = (UniqueConstraint("family_id", "owner_user_id", "target_user_id"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(ForeignKey("families.id"), index=True)
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    target_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    preferred_calling_name: Mapped[str] = mapped_column(String(80), default="")
+    common_greetings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    sentence_style: Mapped[str] = mapped_column(String(200), default="简短、自然")
+    dialect_preference: Mapped[str] = mapped_column(String(50), default="普通话")
+    comfort_style: Mapped[str] = mapped_column(String(300), default="先倾听，再给简短回应")
+    reminder_style: Mapped[str] = mapped_column(String(300), default="温和提醒，不命令")
+    banned_phrases: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(24), default="active")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class RiskEvent(Base, TimestampMixin):
+    __tablename__ = "risk_events"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(ForeignKey("families.id"), index=True)
+    subject_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    conversation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("conversations.id"), nullable=True, index=True
+    )
+    message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("messages.id"), nullable=True
+    )
+    level: Mapped[str] = mapped_column(String(20), index=True)
+    labels: Mapped[list[str]] = mapped_column(JSON, default=list)
+    summary_encrypted: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="open", index=True)
+    handled_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    resolution_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AiUsageRecord(Base, TimestampMixin):
+    __tablename__ = "ai_usage_records"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    family_id: Mapped[str] = mapped_column(ForeignKey("families.id"), index=True)
+    conversation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("conversations.id"), nullable=True, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(50), index=True)
+    model: Mapped[str] = mapped_column(String(100))
+    latency_ms: Mapped[int] = mapped_column(default=0)
+    prompt_tokens: Mapped[int] = mapped_column(default=0)
+    completion_tokens: Mapped[int] = mapped_column(default=0)
+    total_tokens: Mapped[int] = mapped_column(default=0)
+    estimated_cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+
+
 Index("ix_member_family_status", FamilyMember.family_id, FamilyMember.status)
 Index("ix_consent_family_type", Consent.family_id, Consent.consent_type)
 Index("ix_message_conversation_time", Message.conversation_id, Message.created_at)
+Index("ix_knowledge_chunk_document_index", KnowledgeChunk.document_id, KnowledgeChunk.chunk_index)
+Index("ix_risk_family_status", RiskEvent.family_id, RiskEvent.status)
+Index("ix_usage_family_created", AiUsageRecord.family_id, AiUsageRecord.created_at)

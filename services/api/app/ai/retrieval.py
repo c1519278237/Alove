@@ -5,8 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..deps import require_membership
-from ..models import KnowledgeDocument, Memory
-from ..security import decrypt_text
+from ..models import Consent, KnowledgeChunk, KnowledgeDocument, Memory
+from ..security import decrypt_text, utc_now
 
 
 @dataclass(slots=True)
@@ -33,6 +33,37 @@ def _score(query: str, candidate: str) -> float:
     return len(matched) / len(query_tokens)
 
 
+def _can_use_family_document(
+    db: Session,
+    *,
+    family_id: str,
+    user_id: str,
+    document_owner_id: str,
+    is_elder: bool,
+) -> bool:
+    if document_owner_id == user_id or not is_elder:
+        return True
+    grants = db.scalars(
+        select(Consent).where(
+            Consent.family_id == family_id,
+            Consent.subject_user_id == user_id,
+            Consent.consent_type == "family_knowledge",
+            Consent.revoked_at.is_(None),
+        )
+    ).all()
+    for grant in grants:
+        if grant.grantee_user_id not in {None, document_owner_id}:
+            continue
+        if grant.expires_at is None:
+            return True
+        expires_at = grant.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=utc_now().tzinfo)
+        if expires_at > utc_now():
+            return True
+    return False
+
+
 def retrieve_family_context(
     db: Session,
     *,
@@ -49,6 +80,7 @@ def retrieve_family_context(
             KnowledgeDocument.status == "active",
         )
     ).all()
+    visible_documents: dict[str, KnowledgeDocument] = {}
     for document in documents:
         allowed = (
             document.visibility_scope == "family"
@@ -56,14 +88,41 @@ def retrieve_family_context(
             or (document.visibility_scope == "elder_only" and member.role == "elder")
             or (document.visibility_scope == "child_only" and member.role in {"child", "admin"})
         )
-        if not allowed:
+        if not allowed or not _can_use_family_document(
+            db,
+            family_id=family_id,
+            user_id=user_id,
+            document_owner_id=document.owner_user_id,
+            is_elder=member.role == "elder",
+        ):
             continue
-        content = decrypt_text(document.content_encrypted) or ""
-        score = _score(query, document.title + " " + content)
-        if score > 0:
-            candidates.append(
-                Evidence("knowledge", document.id, document.title, content[:240], score)
+        visible_documents[document.id] = document
+
+    if visible_documents:
+        chunks = db.scalars(
+            select(KnowledgeChunk).where(
+                KnowledgeChunk.document_id.in_(visible_documents),
+                KnowledgeChunk.status == "active",
             )
+        ).all()
+        chunked_document_ids = {chunk.document_id for chunk in chunks}
+        for chunk in chunks:
+            document = visible_documents[chunk.document_id]
+            content = decrypt_text(chunk.content_encrypted) or ""
+            score = _score(query, document.title + " " + content)
+            if score > 0:
+                candidates.append(
+                    Evidence("knowledge_chunk", chunk.id, document.title, content[:320], score)
+                )
+        for document_id, document in visible_documents.items():
+            if document_id in chunked_document_ids:
+                continue
+            content = decrypt_text(document.content_encrypted) or ""
+            score = _score(query, document.title + " " + content)
+            if score > 0:
+                candidates.append(
+                    Evidence("knowledge", document.id, document.title, content[:320], score)
+                )
 
     memories = db.scalars(
         select(Memory).where(

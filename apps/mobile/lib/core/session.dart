@@ -149,4 +149,3 @@ class SessionController extends StateNotifier<SessionState> {
     state = const SessionState();
   }
 }
-

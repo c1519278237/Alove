@@ -17,9 +17,11 @@ android/local.properties
 ios/Flutter/Generated.xcconfig
 qa/
 .codex_deps/
+.cache/
 
 # Never commit real user exports, audio, consent evidence, or production backups.
 data/
 uploads/
 backups/
+logs/
 ~$*

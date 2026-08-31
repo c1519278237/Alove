@@ -5,8 +5,14 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user
 from ..errors import consent_required, forbidden, not_found
-from ..models import Reminder, User
-from ..schemas import ReminderCreate, ReminderOut, ReminderPatch
+from ..models import Reminder, ReminderEvent, User
+from ..schemas import (
+    ReminderAction,
+    ReminderCreate,
+    ReminderEventOut,
+    ReminderOut,
+    ReminderPatch,
+)
 from ..security import decrypt_text, encrypt_text
 from .care import _common_family_ids
 
@@ -23,6 +29,17 @@ def _reminder_out(reminder: Reminder) -> ReminderOut:
         category=reminder.category,
         status=reminder.status,
         created_at=reminder.created_at,
+    )
+
+
+def _event_out(event: ReminderEvent) -> ReminderEventOut:
+    return ReminderEventOut(
+        id=event.id,
+        reminder_id=event.reminder_id,
+        actor_user_id=event.actor_user_id,
+        action=event.action,
+        note=decrypt_text(event.note_encrypted),
+        created_at=event.created_at,
     )
 
 
@@ -98,6 +115,46 @@ def patch_reminder(
             setattr(reminder, field, value)
     db.commit()
     return _reminder_out(reminder)
+
+
+@router.post("/reminders/{reminder_id}/actions", response_model=ReminderEventOut)
+def record_reminder_action(
+    reminder_id: str,
+    payload: ReminderAction,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ReminderEventOut:
+    reminder = _editable_reminder(db, reminder_id, user.id)
+    if user.id != reminder.owner_user_id:
+        raise forbidden("提醒播放和确认状态只能由接收提醒的人更新")
+    event = ReminderEvent(
+        reminder_id=reminder.id,
+        actor_user_id=user.id,
+        action=payload.action,
+        note_encrypted=encrypt_text(payload.note),
+    )
+    if payload.action == "confirmed":
+        reminder.status = "done" if reminder.schedule_rule.startswith("once:") else "active"
+    elif payload.action == "expired":
+        reminder.status = "expired"
+    db.add(event)
+    db.commit()
+    return _event_out(event)
+
+
+@router.get("/reminders/{reminder_id}/events", response_model=list[ReminderEventOut])
+def list_reminder_events(
+    reminder_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[ReminderEventOut]:
+    _editable_reminder(db, reminder_id, user.id)
+    rows = db.scalars(
+        select(ReminderEvent)
+        .where(ReminderEvent.reminder_id == reminder_id)
+        .order_by(ReminderEvent.created_at.desc())
+    ).all()
+    return [_event_out(row) for row in rows]
 
 
 @router.delete("/reminders/{reminder_id}", status_code=204)

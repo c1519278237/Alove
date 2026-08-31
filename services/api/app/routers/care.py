@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from ..audit import append_audit_log
 from ..database import get_db
 from ..deps import get_current_user
-from ..errors import consent_required, forbidden, not_found
+from ..errors import AppError, consent_required, forbidden, not_found
 from ..models import (
     CareNeed,
     CareReport,
@@ -17,7 +17,10 @@ from ..models import (
     Conversation,
     FamilyMember,
     FamilyMessage,
+    MediaObject,
     Message,
+    Reminder,
+    ReminderEvent,
     User,
 )
 from ..schemas import (
@@ -282,6 +285,51 @@ def generate_report(
         .where(CareNeed.elder_user_id == elder_id, CareNeed.created_at >= period_start)
         .order_by(CareNeed.created_at.desc())
     ).all()
+    reminders = db.scalars(
+        select(Reminder).where(Reminder.owner_user_id == elder_id)
+    ).all()
+    reminder_ids = [item.id for item in reminders]
+    reminder_events = []
+    if reminder_ids:
+        reminder_events = list(
+            db.scalars(
+                select(ReminderEvent).where(
+                    ReminderEvent.reminder_id.in_(reminder_ids),
+                    ReminderEvent.created_at >= period_start,
+                )
+            ).all()
+        )
+    reminder_actions = Counter(event.action for event in reminder_events)
+    received_messages = list(
+        db.scalars(
+            select(FamilyMessage).where(
+                FamilyMessage.recipient_user_id == elder_id,
+                FamilyMessage.created_at >= period_start,
+            )
+        ).all()
+    )
+    active_days = len({message.created_at.date().isoformat() for message in messages})
+    completed_needs = sum(1 for need in needs if need.status == "completed")
+    pending_needs = sum(1 for need in needs if need.status in {"pending", "accepted"})
+    main_topic = topic_counts.most_common(1)[0][0] if topic_counts else None
+    observations: list[str] = []
+    if main_topic:
+        observations.append(f"授权对话中较常提到“{main_topic}”相关内容。")
+    if active_days:
+        observations.append(f"本周期共有 {active_days} 天产生了授权分享的对话。")
+    if pending_needs:
+        observations.append(f"仍有 {pending_needs} 项老人主动确认的需求等待闭环。")
+    if reminder_actions["confirmed"]:
+        observations.append(f"老人确认完成提醒 {reminder_actions['confirmed']} 次。")
+    recommended_actions = []
+    if len(messages) < 5:
+        recommended_actions.append("数据较少，建议先直接联系老人了解近况。")
+    if pending_needs:
+        recommended_actions.append("优先回应老人已确认且尚未完成的需求。")
+    if main_topic == "情绪与陪伴":
+        recommended_actions.append("建议安排一次真实通话或探望，并由家人亲自确认感受。")
+    if not recommended_actions:
+        recommended_actions.append("保持规律联系，并让老人继续自主确认需要转达的事项。")
     report_payload = {
         "title": "生活状态与关怀摘要",
         "disclaimer": "仅基于老人已授权分享的对话生成，不是医疗诊断或完整生活记录。",
@@ -289,6 +337,7 @@ def generate_report(
         "data_sufficiency": "limited" if len(messages) < 5 else "normal",
         "shared_conversation_count": len(conversations),
         "shared_message_count": len(messages),
+        "active_conversation_days": active_days,
         "frequent_topics": [
             {"topic": topic, "mentions": count} for topic, count in topic_counts.most_common(5)
         ],
@@ -301,11 +350,24 @@ def generate_report(
             }
             for need in needs[:10]
         ],
-        "recommended_action": (
-            "数据较少，建议先直接联系老人了解近况。"
-            if len(messages) < 5
-            else "可结合需求列表主动联系老人，核实需要家人回应的事项。"
-        ),
+        "need_summary": {
+            "new": len(needs),
+            "pending_or_accepted": pending_needs,
+            "completed": completed_needs,
+        },
+        "reminder_summary": {
+            "active_reminders": sum(1 for item in reminders if item.status == "active"),
+            "played": reminder_actions["played"],
+            "confirmed": reminder_actions["confirmed"],
+            "skipped": reminder_actions["skipped"],
+        },
+        "family_message_summary": {
+            "received": len(received_messages),
+            "viewed_or_played": sum(1 for item in received_messages if item.played_at),
+        },
+        "observations": observations,
+        "recommended_actions": recommended_actions,
+        "recommended_action": recommended_actions[0],
     }
     report = CareReport(
         elder_user_id=elder_id,
@@ -395,6 +457,17 @@ def create_family_message(
 ) -> FamilyMessageOut:
     if not _common_family_ids(db, user.id, payload.recipient_user_id):
         raise not_found("家庭成员")
+    if payload.type == "audio":
+        if not payload.audio_object_key:
+            raise AppError("AUDIO_REQUIRED", "语音留言需要先上传音频文件", 422)
+        media = db.get(MediaObject, payload.audio_object_key)
+        if (
+            media is None
+            or media.owner_user_id != user.id
+            or media.status != "active"
+            or not media.mime_type.startswith("audio/")
+        ):
+            raise not_found("语音文件")
     message = FamilyMessage(
         sender_user_id=user.id,
         recipient_user_id=payload.recipient_user_id,
@@ -414,6 +487,19 @@ def family_message_inbox(
     rows = db.scalars(
         select(FamilyMessage)
         .where(FamilyMessage.recipient_user_id == user.id)
+        .order_by(FamilyMessage.created_at.desc())
+        .limit(100)
+    ).all()
+    return [_family_message_out(row) for row in rows]
+
+
+@router.get("/family-messages/sent", response_model=list[FamilyMessageOut])
+def family_message_sent(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> list[FamilyMessageOut]:
+    rows = db.scalars(
+        select(FamilyMessage)
+        .where(FamilyMessage.sender_user_id == user.id)
         .order_by(FamilyMessage.created_at.desc())
         .limit(100)
     ).all()

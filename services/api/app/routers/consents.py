@@ -139,7 +139,15 @@ def data_access_history(
     return list(
         db.scalars(
             select(DataAccessAuditLog)
-            .where(DataAccessAuditLog.actor_id == user.id)
+            .where(
+                or_(
+                    DataAccessAuditLog.actor_id == user.id,
+                    (
+                        (DataAccessAuditLog.resource_type == "user")
+                        & (DataAccessAuditLog.resource_id == user.id)
+                    ),
+                )
+            )
             .order_by(DataAccessAuditLog.created_at.desc())
             .limit(200)
         ).all()

@@ -5,11 +5,35 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user, require_membership
 from ..errors import forbidden, not_found
-from ..models import KnowledgeDocument, Memory, User
-from ..schemas import KnowledgeCreate, KnowledgeOut, MemoryOut
+from ..models import KnowledgeChunk, KnowledgeDocument, Memory, User
+from ..schemas import KnowledgeCreate, KnowledgeOut, MemoryCreate, MemoryOut, MemoryPatch
 from ..security import decrypt_text, encrypt_text, utc_now
 
 router = APIRouter(tags=["knowledge"])
+
+
+def _chunk_text(content: str, *, max_chars: int = 700, overlap: int = 100) -> list[str]:
+    normalized = "\n".join(line.strip() for line in content.splitlines() if line.strip())
+    if not normalized:
+        return []
+    chunks: list[str] = []
+    start = 0
+    while start < len(normalized):
+        end = min(len(normalized), start + max_chars)
+        if end < len(normalized):
+            boundary = max(
+                normalized.rfind("。", start, end),
+                normalized.rfind("！", start, end),
+                normalized.rfind("？", start, end),
+                normalized.rfind("\n", start, end),
+            )
+            if boundary > start + max_chars // 2:
+                end = boundary + 1
+        chunks.append(normalized[start:end])
+        if end >= len(normalized):
+            break
+        start = max(start + 1, end - overlap)
+    return chunks
 
 
 def _knowledge_out(document: KnowledgeDocument) -> KnowledgeOut:
@@ -59,6 +83,17 @@ def create_knowledge(
         visibility_scope=payload.visibility_scope,
     )
     db.add(document)
+    db.flush()
+    for index, chunk in enumerate(_chunk_text(payload.content)):
+        db.add(
+            KnowledgeChunk(
+                document_id=document.id,
+                family_id=family_id,
+                chunk_index=index,
+                content_encrypted=encrypt_text(chunk) or "",
+                token_count=max(1, len(chunk) // 2),
+            )
+        )
     db.commit()
     return _knowledge_out(document)
 
@@ -104,6 +139,12 @@ def delete_knowledge(
     document.status = "deleted"
     document.content_encrypted = encrypt_text("[deleted]") or ""
     document.updated_at = utc_now()
+    chunks = db.scalars(
+        select(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id)
+    ).all()
+    for chunk in chunks:
+        chunk.status = "deleted"
+        chunk.content_encrypted = encrypt_text("[deleted]") or ""
     db.commit()
     return None
 
@@ -120,11 +161,52 @@ def list_memories(
     return [_memory_out(row) for row in rows]
 
 
+@router.post("/memories", response_model=MemoryOut, status_code=201)
+def create_memory(
+    payload: MemoryCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MemoryOut:
+    require_membership(db, payload.family_id, user.id)
+    memory = Memory(
+        owner_user_id=user.id,
+        family_id=payload.family_id,
+        memory_type=payload.memory_type,
+        content_encrypted=encrypt_text(payload.content) or "",
+        confidence=1.0,
+        sensitivity=payload.sensitivity,
+        sharing_level=payload.sharing_level,
+        confirmation_status="confirmed",
+    )
+    db.add(memory)
+    db.commit()
+    return _memory_out(memory)
+
+
 def _owned_memory(db: Session, memory_id: str, user_id: str) -> Memory:
     memory = db.get(Memory, memory_id)
     if memory is None or memory.owner_user_id != user_id or memory.deleted_at is not None:
         raise not_found("记忆")
     return memory
+
+
+@router.patch("/memories/{memory_id}", response_model=MemoryOut)
+def patch_memory(
+    memory_id: str,
+    payload: MemoryPatch,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MemoryOut:
+    memory = _owned_memory(db, memory_id, user.id)
+    if payload.content is not None:
+        memory.content_encrypted = encrypt_text(payload.content) or ""
+    for field in ("memory_type", "sensitivity", "sharing_level"):
+        value = getattr(payload, field)
+        if value is not None:
+            setattr(memory, field, value)
+    memory.confirmation_status = "confirmed"
+    db.commit()
+    return _memory_out(memory)
 
 
 @router.post("/memories/{memory_id}/confirm", response_model=MemoryOut)

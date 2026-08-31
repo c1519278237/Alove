@@ -1,0 +1,35 @@
+{
+    "name": "归音 AI 家庭关怀",
+    "short_name": "归音",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#F7FAFA",
+    "theme_color": "#176B7A",
+    "description": "归音——面向老人和家庭成员的双向情感协同 AI App",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

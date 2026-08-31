@@ -114,6 +114,7 @@ class ConsentCreate(BaseModel):
         "voice_use",
         "audio_retention",
         "reminder_management",
+        "style_personalization",
     ]
     scope: dict[str, Any] = Field(default_factory=dict)
     policy_version: str = "v1.0"
@@ -184,6 +185,7 @@ class ChatTurnOut(BaseModel):
     assistant_message: MessageOut
     safety_level: str
     evidence: list[dict[str, str]] = Field(default_factory=list)
+    safety_notice: str | None = None
 
 
 class KnowledgeCreate(BaseModel):
@@ -217,6 +219,21 @@ class MemoryOut(BaseModel):
     confirmation_status: str
     source_message_ids: list[str]
     created_at: datetime
+
+
+class MemoryCreate(BaseModel):
+    family_id: str
+    memory_type: Literal["fact", "preference", "routine", "relationship"] = "fact"
+    content: str = Field(min_length=1, max_length=1000)
+    sensitivity: Literal["normal", "sensitive"] = "normal"
+    sharing_level: Literal["private", "family_summary"] = "private"
+
+
+class MemoryPatch(BaseModel):
+    content: str | None = Field(default=None, min_length=1, max_length=1000)
+    memory_type: Literal["fact", "preference", "routine", "relationship"] | None = None
+    sensitivity: Literal["normal", "sensitive"] | None = None
+    sharing_level: Literal["private", "family_summary"] | None = None
 
 
 class CareNeedCreate(BaseModel):
@@ -289,6 +306,20 @@ class ReminderOut(BaseModel):
     created_at: datetime
 
 
+class ReminderAction(BaseModel):
+    action: Literal["played", "confirmed", "skipped", "expired"]
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ReminderEventOut(BaseModel):
+    id: str
+    reminder_id: str
+    actor_user_id: str
+    action: str
+    note: str | None
+    created_at: datetime
+
+
 class FamilyMessageCreate(BaseModel):
     recipient_user_id: str
     type: Literal["text", "audio"] = "text"
@@ -304,6 +335,16 @@ class FamilyMessageOut(BaseModel):
     content: str
     audio_object_key: str | None
     played_at: datetime | None
+    created_at: datetime
+
+
+class MediaObjectOut(ORMModel):
+    id: str
+    owner_user_id: str
+    mime_type: str
+    original_name: str
+    size_bytes: int
+    status: str
     created_at: datetime
 
 
@@ -324,6 +365,83 @@ class VoiceProfileOut(BaseModel):
     expires_at: datetime | None
     watermark_config: dict[str, Any]
     created_at: datetime
+
+
+class StyleProfileUpsert(BaseModel):
+    target_user_id: str
+    preferred_calling_name: str = Field(default="", max_length=80)
+    common_greetings: list[str] = Field(default_factory=list, max_length=12)
+    sentence_style: str = Field(default="简短、自然", max_length=200)
+    dialect_preference: str = Field(default="普通话", max_length=50)
+    comfort_style: str = Field(default="先倾听，再给简短回应", max_length=300)
+    reminder_style: str = Field(default="温和提醒，不命令", max_length=300)
+    banned_phrases: list[str] = Field(default_factory=list, max_length=30)
+
+
+class StyleProfileOut(ORMModel):
+    id: str
+    family_id: str
+    owner_user_id: str
+    target_user_id: str
+    preferred_calling_name: str
+    common_greetings: list[str]
+    sentence_style: str
+    dialect_preference: str
+    comfort_style: str
+    reminder_style: str
+    banned_phrases: list[str]
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class RiskEventOut(BaseModel):
+    id: str
+    family_id: str
+    subject_user_id: str
+    conversation_id: str | None
+    level: str
+    labels: list[str]
+    summary: str
+    status: str
+    handled_by: str | None
+    resolution: str | None
+    created_at: datetime
+    handled_at: datetime | None
+
+
+class RiskResolve(BaseModel):
+    status: Literal["acknowledged", "resolved", "false_positive"] = "resolved"
+    resolution: str = Field(min_length=1, max_length=1000)
+
+
+class AiUsageOut(ORMModel):
+    id: str
+    user_id: str
+    family_id: str
+    conversation_id: str | None
+    provider: str
+    model: str
+    latency_ms: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    estimated_cost_usd: float
+    created_at: datetime
+
+
+class AdminOverviewOut(BaseModel):
+    family_id: str
+    active_members: int
+    elders: int
+    conversations_7d: int
+    messages_7d: int
+    open_risk_events: int
+    pending_care_needs: int
+    ai_tokens_7d: int
+    estimated_cost_usd_7d: float
+    ai_provider: str
+    ai_model: str
 
 
 class HealthOut(BaseModel):

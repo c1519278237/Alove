@@ -5,9 +5,13 @@ import 'package:go_router/go_router.dart';
 import 'core/session.dart';
 import 'features/auth/family_setup_screen.dart';
 import 'features/auth/login_screen.dart';
+import 'features/admin/admin_dashboard_screen.dart';
+import 'features/care/care_need_screen.dart';
 import 'features/conversation/conversation_screen.dart';
+import 'features/family/family_tools_screen.dart';
 import 'features/home/child_home_screen.dart';
 import 'features/home/elder_home_screen.dart';
+import 'features/privacy/elder_manage_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -58,11 +62,27 @@ class GuiyinApp extends ConsumerWidget {
           path: '/conversation',
           builder: (context, state) => const ConversationScreen(),
         ),
+        GoRoute(
+          path: '/elder-manage',
+          builder: (context, state) => const ElderManageScreen(),
+        ),
+        GoRoute(
+          path: '/care-need',
+          builder: (context, state) => const CareNeedScreen(),
+        ),
+        GoRoute(
+          path: '/family-tools',
+          builder: (context, state) => const FamilyToolsScreen(),
+        ),
+        GoRoute(
+          path: '/admin',
+          builder: (context, state) => const AdminDashboardScreen(),
+        ),
       ],
     );
 
     return MaterialApp.router(
-      title: '归音',
+      title: '归音 AI 家庭关怀',
       debugShowCheckedModeBanner: false,
       routerConfig: router,
       theme: ThemeData(
@@ -82,7 +102,8 @@ class GuiyinApp extends ConsumerWidget {
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
             minimumSize: const Size.fromHeight(56),
-            textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+            textStyle:
+                const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
           ),
         ),
       ),
@@ -98,4 +119,3 @@ class _LoadingScreen extends StatelessWidget {
     return const Scaffold(body: Center(child: CircularProgressIndicator()));
   }
 }
-
