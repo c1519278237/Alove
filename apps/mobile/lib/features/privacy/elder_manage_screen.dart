@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -24,6 +25,7 @@ class _ElderManageScreenState extends ConsumerState<ElderManageScreen> {
   };
 
   bool _loading = true;
+  bool _busy = false;
   String? _error;
   String? _granteeId;
   List<Map<String, dynamic>> _members = const [];
@@ -43,20 +45,30 @@ class _ElderManageScreenState extends ConsumerState<ElderManageScreen> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool showSpinner = true}) async {
     final session = ref.read(sessionProvider);
-    if (session.familyId == null) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    if (session.familyId == null) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = '尚未读取到家庭信息，请返回首页后重试';
+        });
+      }
+      return;
+    }
+    if (showSpinner && mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final api = ref.read(apiClientProvider);
       final results = await Future.wait([
         api.familyMembers(session.familyId!),
         api.consents(),
         api.memories(),
-      ]);
+      ]).timeout(const Duration(seconds: 12));
       _members = results[0]
           .where((item) => item['user_id'] != session.userId)
           .toList();
@@ -64,10 +76,37 @@ class _ElderManageScreenState extends ConsumerState<ElderManageScreen> {
       _memories = results[2];
       _granteeId ??=
           _members.isEmpty ? null : _members.first['user_id'] as String?;
+    } on TimeoutException {
+      _error = '加载超过12秒，请检查后端服务后点击重试';
     } catch (error) {
       _error = error.toString();
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _runMutation(
+    Future<void> Function() action, {
+    required String success,
+  }) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await action().timeout(const Duration(seconds: 12));
+      await _load(showSpinner: false);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(success)),
+      );
+    } on TimeoutException {
+      if (mounted) setState(() => _error = '操作超过12秒，请确认后端服务正常后重试');
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -88,7 +127,7 @@ class _ElderManageScreenState extends ConsumerState<ElderManageScreen> {
       setState(() => _error = '家庭中还没有可授权的家人');
       return;
     }
-    try {
+    await _runMutation(() async {
       await ref.read(apiClientProvider).createConsent(
         subjectUserId: session.userId!,
         familyId: session.familyId!,
@@ -99,47 +138,35 @@ class _ElderManageScreenState extends ConsumerState<ElderManageScreen> {
           'explicit_confirmation_required': true,
         },
       );
-      await _load();
-    } catch (error) {
-      setState(() => _error = error.toString());
-    }
+    }, success: '授权已保存');
   }
 
   Future<void> _revoke(String consentId) async {
-    try {
+    await _runMutation(() async {
       await ref.read(apiClientProvider).revokeConsent(consentId);
-      await _load();
-    } catch (error) {
-      setState(() => _error = error.toString());
-    }
+    }, success: '授权已撤回');
   }
 
   Future<void> _memoryAction(String id, String action) async {
-    try {
+    await _runMutation(() async {
       final api = ref.read(apiClientProvider);
       if (action == 'confirm') await api.confirmMemory(id);
       if (action == 'reject') await api.rejectMemory(id);
       if (action == 'delete') await api.deleteMemory(id);
-      await _load();
-    } catch (error) {
-      setState(() => _error = error.toString());
-    }
+    }, success: action == 'delete' ? '记忆已删除' : '记忆状态已更新');
   }
 
   Future<void> _addMemory() async {
     final content = _memoryInput.text.trim();
     final familyId = ref.read(sessionProvider).familyId;
     if (content.isEmpty || familyId == null) return;
-    try {
+    await _runMutation(() async {
       await ref.read(apiClientProvider).createMemory(
             familyId: familyId,
             content: content,
           );
       _memoryInput.clear();
-      await _load();
-    } catch (error) {
-      setState(() => _error = error.toString());
-    }
+    }, success: '记忆已添加，请确认后再供AI使用');
   }
 
   Future<void> _deleteAccount() async {
@@ -220,6 +247,7 @@ class _ElderManageScreenState extends ConsumerState<ElderManageScreen> {
                         TextButton(onPressed: _load, child: const Text('重试')),
                       ],
                     ),
+                  if (_busy) const LinearProgressIndicator(),
                   Expanded(
                     child: TabBarView(
                       children: [
@@ -266,11 +294,12 @@ class _ElderManageScreenState extends ConsumerState<ElderManageScreen> {
               subtitle: Text(consent == null ? '未授权' : '已授权，可随时撤回'),
               trailing: consent == null
                   ? FilledButton.tonal(
-                      onPressed: () => _grant(entry.key),
+                      onPressed: _busy ? null : () => _grant(entry.key),
                       child: const Text('授权'),
                     )
                   : TextButton(
-                      onPressed: () => _revoke(consent['id'] as String),
+                      onPressed:
+                          _busy ? null : () => _revoke(consent['id'] as String),
                       child: const Text('撤回'),
                     ),
             ),
@@ -291,8 +320,10 @@ class _ElderManageScreenState extends ConsumerState<ElderManageScreen> {
           decoration: InputDecoration(
             labelText: '手动添加一条记忆',
             border: const OutlineInputBorder(),
-            suffixIcon:
-                IconButton(onPressed: _addMemory, icon: const Icon(Icons.add)),
+            suffixIcon: IconButton(
+              onPressed: _busy ? null : _addMemory,
+              icon: const Icon(Icons.add),
+            ),
           ),
         ),
         const SizedBox(height: 14),
@@ -322,8 +353,12 @@ class _ElderManageScreenState extends ConsumerState<ElderManageScreen> {
                           child: const Text('不是这样'),
                         ),
                       TextButton(
-                        onPressed: () =>
-                            _memoryAction(memory['id'] as String, 'delete'),
+                        onPressed: _busy
+                            ? null
+                            : () => _memoryAction(
+                                  memory['id'] as String,
+                                  'delete',
+                                ),
                         child: const Text('删除'),
                       ),
                     ],
