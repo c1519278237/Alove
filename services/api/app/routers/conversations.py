@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..ai.memory import create_memory_candidates
@@ -69,6 +69,33 @@ async def execute_chat_turn(
 ) -> tuple[Message, Message, object]:
     if conversation.status != "active":
         raise AppError("CONVERSATION_CLOSED", "该对话已经结束", 409)
+    settings = get_settings()
+    since = utc_now() - timedelta(days=1)
+    daily_usage = db.execute(
+        select(
+            func.count(AiUsageRecord.id),
+            func.coalesce(func.sum(AiUsageRecord.total_tokens), 0),
+        ).where(
+            AiUsageRecord.user_id == conversation.owner_user_id,
+            AiUsageRecord.created_at >= since,
+        )
+    ).one()
+    if int(daily_usage[0]) >= settings.ai_daily_request_limit:
+        raise AppError("AI_DAILY_LIMIT", "今天的 AI 对话次数已达到安全限额", 429)
+    if int(daily_usage[1]) >= settings.ai_daily_token_limit:
+        raise AppError("AI_TOKEN_LIMIT", "今天的 AI 使用额度已达到上限", 429)
+    latest_usage = db.scalar(
+        select(AiUsageRecord)
+        .where(AiUsageRecord.user_id == conversation.owner_user_id)
+        .order_by(AiUsageRecord.created_at.desc())
+        .limit(1)
+    )
+    if latest_usage is not None:
+        created_at = latest_usage.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=utc_now().tzinfo)
+        if (utc_now() - created_at).total_seconds() < settings.ai_min_interval_seconds:
+            raise AppError("AI_RATE_LIMITED", "消息发送太快，请稍后再试", 429)
     image = (
         read_owned_image(db, image_media_id, conversation.owner_user_id)
         if image_media_id is not None
@@ -111,7 +138,6 @@ async def execute_chat_turn(
     prompt_tokens = int(usage.get("prompt_tokens", 0))
     completion_tokens = int(usage.get("completion_tokens", 0))
     total_tokens = int(usage.get("total_tokens", prompt_tokens + completion_tokens))
-    settings = get_settings()
     estimated_cost = (
         prompt_tokens * settings.ai_input_cost_per_million_usd
         + completion_tokens * settings.ai_output_cost_per_million_usd

@@ -4,6 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/session.dart';
+import '../../core/notification_service.dart';
+
+Future<List<Map<String, dynamic>>> _loadReminders(WidgetRef ref) async {
+  final reminders = await ref.read(apiClientProvider).reminders();
+  await NotificationService.instance.syncReminders(reminders);
+  return reminders;
+}
 
 class ElderHomeScreen extends ConsumerWidget {
   const ElderHomeScreen({super.key});
@@ -85,7 +92,7 @@ class ElderHomeScreen extends ConsumerWidget {
           _HomeSection(
             icon: Icons.notifications_active_outlined,
             title: '今天的提醒',
-            loader: () => ref.read(apiClientProvider).reminders(),
+            loader: () => _loadReminders(ref),
             emptyText: '今天没有待办提醒',
             itemText: (item) => item['content']?.toString() ?? '一条提醒',
             actionLabel: (item) => item['status'] == 'active' ? '我完成了' : null,
@@ -97,23 +104,11 @@ class ElderHomeScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 24),
           OutlinedButton.icon(
-            onPressed: () => showDialog<void>(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: const Text('联系真实家人'),
-                content: const Text('请使用手机通讯录拨打家人的真实号码。归音不会冒充家人拨打电话。'),
-                actions: [
-                  FilledButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('知道了'),
-                  ),
-                ],
-              ),
-            ),
+            onPressed: () => context.push('/quick-call'),
             icon: const Icon(Icons.phone, size: 28),
             label: const Padding(
               padding: EdgeInsets.all(12),
-              child: Text('联系真实家人', style: TextStyle(fontSize: 20)),
+              child: Text('一键呼叫子女', style: TextStyle(fontSize: 20)),
             ),
           ),
         ],

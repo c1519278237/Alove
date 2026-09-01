@@ -208,6 +208,14 @@ class KnowledgeOut(BaseModel):
     created_at: datetime
 
 
+class KnowledgeSearchResult(BaseModel):
+    source_type: str
+    source_id: str
+    title: str
+    excerpt: str
+    score: float
+
+
 class MemoryOut(BaseModel):
     id: str
     owner_user_id: str
@@ -351,8 +359,9 @@ class MediaObjectOut(ORMModel):
 
 class VoiceEnrollment(BaseModel):
     consent_id: str
-    provider: str = Field(min_length=1, max_length=50)
+    provider: str | None = Field(default=None, max_length=50)
     allowed_recipient_ids: list[str] = Field(min_length=1, max_length=10)
+    sample_media_id: str | None = None
     expires_at: datetime | None = None
 
 
@@ -361,11 +370,59 @@ class VoiceProfileOut(BaseModel):
     owner_user_id: str
     provider: str
     consent_id: str
+    sample_media_id: str | None
     allowed_recipient_ids: list[str]
     status: str
     expires_at: datetime | None
     watermark_config: dict[str, Any]
     created_at: datetime
+
+
+class VoiceSynthesis(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+
+
+class StyleSampleOut(BaseModel):
+    id: str
+    family_id: str
+    owner_user_id: str
+    target_user_id: str
+    title: str
+    source_type: str
+    metrics: dict[str, Any]
+    status: str
+    created_at: datetime
+
+
+class FamilyContactOut(BaseModel):
+    user_id: str
+    display_name: str
+    relationship_label: str | None
+    role: str
+    phone: str
+
+
+class CallEventCreate(BaseModel):
+    callee_user_id: str
+
+
+class CallEventPatch(BaseModel):
+    status: Literal["initiated", "completed", "cancelled", "failed"]
+    duration_seconds: int | None = Field(default=None, ge=0, le=86_400)
+
+
+class CallEventOut(BaseModel):
+    id: str
+    family_id: str
+    caller_user_id: str
+    caller_name: str
+    callee_user_id: str
+    callee_name: str
+    status: str
+    source: str
+    duration_seconds: int | None
+    created_at: datetime
+    ended_at: datetime | None
 
 
 class StyleProfileUpsert(BaseModel):

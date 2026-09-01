@@ -1,4 +1,5 @@
 .env
+.env.production
 .venv/
 __pycache__/
 *.py[cod]
@@ -14,6 +15,9 @@ htmlcov/
 .packages
 build/
 android/local.properties
+android/key.properties
+*.jks
+*.keystore
 ios/Flutter/Generated.xcconfig
 qa/
 .codex_deps/

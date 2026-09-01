@@ -21,6 +21,7 @@ class _FamilyToolsScreenState extends ConsumerState<FamilyToolsScreen> {
   List<Map<String, dynamic>> _knowledge = const [];
   List<Map<String, dynamic>> _sent = const [];
   List<Map<String, dynamic>> _voiceProfiles = const [];
+  List<Map<String, dynamic>> _styleSamples = const [];
 
   final _message = TextEditingController();
   final _reminder = TextEditingController();
@@ -80,10 +81,12 @@ class _FamilyToolsScreenState extends ConsumerState<FamilyToolsScreen> {
         api.knowledge(familyId),
         api.sentMessages(),
         api.voiceProfiles(),
+        api.styleSamples(familyId, targetUserId: _elderId),
       ]);
       _knowledge = results[0];
       _sent = results[1];
       _voiceProfiles = results[2];
+      _styleSamples = results[3];
     } catch (error) {
       _error = error.toString();
     } finally {
@@ -182,6 +185,53 @@ class _FamilyToolsScreenState extends ConsumerState<FamilyToolsScreen> {
     }, '家庭资料已加入 RAG 知识库');
   }
 
+  Future<void> _uploadKnowledge() async {
+    final familyId = ref.read(sessionProvider).familyId;
+    if (familyId == null) return;
+    final selected = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['txt', 'md', 'csv', 'json', 'pdf', 'docx'],
+      withData: true,
+    );
+    if (selected == null || selected.files.isEmpty) return;
+    final file = selected.files.single;
+    if (file.bytes == null) {
+      setState(() => _error = '无法读取所选资料，请选择 10MB 以内的文件');
+      return;
+    }
+    await _run(() async {
+      await ref.read(apiClientProvider).uploadKnowledgeFile(
+            familyId: familyId,
+            bytes: file.bytes!,
+            filename: file.name,
+          );
+    }, '资料已解析、分块并建立向量索引');
+  }
+
+  Future<void> _uploadStyleSample() async {
+    final familyId = ref.read(sessionProvider).familyId;
+    if (familyId == null || _elderId == null) return;
+    final selected = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['txt', 'md', 'csv', 'json', 'pdf', 'docx'],
+      withData: true,
+    );
+    if (selected == null || selected.files.isEmpty) return;
+    final file = selected.files.single;
+    if (file.bytes == null) {
+      setState(() => _error = '无法读取表达样本');
+      return;
+    }
+    await _run(() async {
+      await ref.read(apiClientProvider).uploadStyleSample(
+            familyId: familyId,
+            targetUserId: _elderId!,
+            bytes: file.bytes!,
+            filename: file.name,
+          );
+    }, '表达样本已加密保存，AI 风格档案已自动更新');
+  }
+
   Future<void> _saveStyle() async {
     final familyId = ref.read(sessionProvider).familyId;
     if (familyId == null || _elderId == null) return;
@@ -204,30 +254,45 @@ class _FamilyToolsScreenState extends ConsumerState<FamilyToolsScreen> {
     }, '表达风格已保存，AI 仍会明确标识身份');
   }
 
-  Future<void> _createVoiceDemo() async {
+  Future<void> _createVoiceProfile() async {
     final session = ref.read(sessionProvider);
     if (_elderId == null ||
         session.familyId == null ||
         session.userId == null) {
       return;
     }
+    final selected = await FilePicker.platform.pickFiles(
+      type: FileType.audio,
+      withData: true,
+    );
+    if (selected == null || selected.files.isEmpty) return;
+    final file = selected.files.single;
+    if (file.bytes == null) {
+      setState(() => _error = '无法读取声线样本，请选择 10MB 以内的音频');
+      return;
+    }
     await _run(() async {
+      final api = ref.read(apiClientProvider);
+      final media = await api.uploadAudio(bytes: file.bytes!, filename: file.name);
       final consent = await ref.read(apiClientProvider).createConsent(
         subjectUserId: session.userId!,
         familyId: session.familyId!,
         granteeUserId: _elderId,
         consentType: 'voice_use',
         scope: {
-          'provider': 'neutral-device-tts',
+          'provider': 'server_configured',
           'ai_identity_notice': true,
-          'clone_enabled': false,
+          'clone_enabled': true,
+          'watermark_required': true,
         },
       );
-      await ref.read(apiClientProvider).createVoiceEnrollment(
+      final profile = await api.createVoiceEnrollment(
         consentId: consent['id'] as String,
         allowedRecipientIds: [_elderId!],
+        sampleMediaId: media['id'] as String,
       );
-    }, '声线授权演示已创建；当前使用中性设备声线，不克隆真人声音');
+      await api.verifyVoiceEnrollment(profile['id'] as String);
+    }, '声线样本和授权已提交；供应商未配置时自动使用设备朗读');
   }
 
   @override
@@ -397,6 +462,28 @@ class _FamilyToolsScreenState extends ConsumerState<FamilyToolsScreen> {
           FilledButton(
               onPressed: _busy ? null : _addKnowledge,
               child: const Text('加入知识库')),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _uploadKnowledge,
+            icon: const Icon(Icons.upload_file),
+            label: const Text('上传 TXT / PDF / Word 等资料'),
+          ),
+          const SizedBox(height: 10),
+          TextButton.icon(
+            onPressed: _busy
+                ? null
+                : () {
+                    final familyId = ref.read(sessionProvider).familyId;
+                    if (familyId == null) return;
+                    _run(() async {
+                      await ref
+                          .read(apiClientProvider)
+                          .reindexKnowledge(familyId);
+                    }, '知识库向量索引已重建');
+                  },
+            icon: const Icon(Icons.refresh),
+            label: const Text('更换向量模型后重建索引'),
+          ),
           const SizedBox(height: 20),
           ..._knowledge.map(
             (item) => Card(
@@ -446,19 +533,59 @@ class _FamilyToolsScreenState extends ConsumerState<FamilyToolsScreen> {
           FilledButton(
               onPressed: _busy ? null : _saveStyle,
               child: const Text('保存表达风格')),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _uploadStyleSample,
+            icon: const Icon(Icons.forum_outlined),
+            label: const Text('上传我的聊天样本并自动学习'),
+          ),
+          ..._styleSamples.map(
+            (item) => ListTile(
+              leading: const Icon(Icons.analytics_outlined),
+              title: Text(item['title']?.toString() ?? '表达样本'),
+              subtitle: Text(
+                '已分析 ${(item['metrics'] as Map?)?['sentence_count'] ?? 0} 句话',
+              ),
+              trailing: IconButton(
+                tooltip: '删除样本',
+                onPressed: _busy
+                    ? null
+                    : () => _run(
+                          () => ref
+                              .read(apiClientProvider)
+                              .deleteStyleSample(item['id'] as String),
+                          '表达样本已删除',
+                        ),
+                icon: const Icon(Icons.delete_outline),
+              ),
+            ),
+          ),
           const Divider(height: 36),
           const Text('声线功能', style: TextStyle(fontWeight: FontWeight.bold)),
-          const Text('本地版本使用中性设备 TTS。以下流程用于验证本人授权、接收对象和撤回机制。'),
+          const Text('请仅上传本人的清晰声音。声线始终带 AI 身份提示并限定授权接收人，可随时撤回。'),
           const SizedBox(height: 12),
           FilledButton.tonal(
-            onPressed: _busy ? null : _createVoiceDemo,
-            child: const Text('创建声线授权演示'),
+            onPressed: _busy ? null : _createVoiceProfile,
+            child: const Text('上传本人声线并创建授权'),
           ),
           ..._voiceProfiles.map(
             (item) => ListTile(
               leading: const Icon(Icons.record_voice_over),
               title: Text(item['provider']?.toString() ?? '声线'),
               subtitle: Text('状态：${item['status']}'),
+              trailing: TextButton(
+                onPressed: _busy
+                    ? null
+                    : () => _run(
+                          () async {
+                            await ref
+                                .read(apiClientProvider)
+                                .revokeVoiceProfile(item['id'] as String);
+                          },
+                          '声线授权和样本已撤回',
+                        ),
+                child: const Text('撤回'),
+              ),
             ),
           ),
         ],

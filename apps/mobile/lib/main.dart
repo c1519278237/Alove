@@ -3,10 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'core/session.dart';
+import 'core/notification_service.dart';
 import 'features/auth/family_setup_screen.dart';
 import 'features/auth/login_screen.dart';
 import 'features/admin/admin_dashboard_screen.dart';
 import 'features/care/care_need_screen.dart';
+import 'features/calls/quick_call_screen.dart';
 import 'features/conversation/conversation_screen.dart';
 import 'features/family/family_tools_screen.dart';
 import 'features/family/family_invite_screen.dart';
@@ -14,8 +16,9 @@ import 'features/home/child_home_screen.dart';
 import 'features/home/elder_home_screen.dart';
 import 'features/privacy/elder_manage_screen.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.instance.initialize();
   runApp(const ProviderScope(child: GuiyinApp()));
 }
 
@@ -74,6 +77,10 @@ final _routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/care-need',
         builder: (context, state) => const CareNeedScreen(),
+      ),
+      GoRoute(
+        path: '/quick-call',
+        builder: (context, state) => const QuickCallScreen(),
       ),
       GoRoute(
         path: '/family-tools',

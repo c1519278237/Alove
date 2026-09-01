@@ -167,6 +167,8 @@ class KnowledgeChunk(Base, TimestampMixin):
     chunk_index: Mapped[int]
     content_encrypted: Mapped[str] = mapped_column(Text)
     token_count: Mapped[int] = mapped_column(default=0)
+    embedding_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="active")
 
 
@@ -263,12 +265,41 @@ class VoiceProfile(Base, TimestampMixin):
     owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     provider: Mapped[str] = mapped_column(String(50))
     provider_voice_ref_encrypted: Mapped[str] = mapped_column(Text)
+    sample_media_id: Mapped[str | None] = mapped_column(
+        ForeignKey("media_objects.id"), nullable=True
+    )
     consent_id: Mapped[str] = mapped_column(ForeignKey("consents.id"))
     allowed_recipient_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(30), default="pending")
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     watermark_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class StyleSample(Base, TimestampMixin):
+    __tablename__ = "style_samples"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(ForeignKey("families.id"), index=True)
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    target_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(160))
+    content_encrypted: Mapped[str] = mapped_column(Text)
+    source_type: Mapped[str] = mapped_column(String(30), default="upload")
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(24), default="active")
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CallEvent(Base, TimestampMixin):
+    __tablename__ = "call_events"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(ForeignKey("families.id"), index=True)
+    caller_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    callee_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(24), default="initiated")
+    source: Mapped[str] = mapped_column(String(30), default="app_quick_call")
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_seconds: Mapped[int | None] = mapped_column(nullable=True)
 
 
 class StyleProfile(Base, TimestampMixin):
@@ -332,5 +363,7 @@ Index("ix_member_family_status", FamilyMember.family_id, FamilyMember.status)
 Index("ix_consent_family_type", Consent.family_id, Consent.consent_type)
 Index("ix_message_conversation_time", Message.conversation_id, Message.created_at)
 Index("ix_knowledge_chunk_document_index", KnowledgeChunk.document_id, KnowledgeChunk.chunk_index)
+Index("ix_style_sample_family_target", StyleSample.family_id, StyleSample.target_user_id)
+Index("ix_call_family_created", CallEvent.family_id, CallEvent.created_at)
 Index("ix_risk_family_status", RiskEvent.family_id, RiskEvent.status)
 Index("ix_usage_family_created", AiUsageRecord.family_id, AiUsageRecord.created_at)

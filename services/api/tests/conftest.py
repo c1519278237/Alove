@@ -9,6 +9,7 @@ os.environ["DATABASE_URL"] = "sqlite:///./test_guiyin.db"
 os.environ["SMS_PROVIDER"] = "console"
 # Never let the local .env file make automated tests consume paid API quota.
 os.environ["AI_API_KEY"] = ""
+os.environ["AI_MIN_INTERVAL_SECONDS"] = "0"
 
 from app.database import Base, engine  # noqa: E402
 from app.main import app  # noqa: E402

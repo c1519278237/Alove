@@ -320,8 +320,33 @@ class ApiClient {
         'visibility_scope': visibilityScope,
       });
 
+  Future<Map<String, dynamic>> uploadKnowledgeFile({
+    required String familyId,
+    required Uint8List bytes,
+    required String filename,
+    String visibilityScope = 'family',
+  }) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/families/$familyId/knowledge/upload',
+        data: FormData.fromMap({
+          'file': MultipartFile.fromBytes(bytes, filename: filename),
+          'title': filename,
+          'visibility_scope': visibilityScope,
+        }),
+        options: Options(contentType: 'multipart/form-data'),
+      );
+      return response.data ?? <String, dynamic>{};
+    } on DioException catch (error) {
+      throw _apiException(error);
+    }
+  }
+
   Future<void> deleteKnowledge(String documentId) =>
       _delete('/knowledge/$documentId');
+
+  Future<Map<String, dynamic>> reindexKnowledge(String familyId) =>
+      _post('/families/$familyId/knowledge/reindex', const {});
 
   Future<List<Map<String, dynamic>>> memories() => _getList('/memories');
 
@@ -348,6 +373,39 @@ class ApiClient {
 
   Future<List<Map<String, dynamic>>> styleProfiles(String familyId) =>
       _getList('/families/$familyId/style-profiles');
+
+  Future<List<Map<String, dynamic>>> styleSamples(
+    String familyId, {
+    String? targetUserId,
+  }) =>
+      _getList(
+        '/families/$familyId/style-samples${targetUserId == null ? '' : '?target_user_id=$targetUserId'}',
+      );
+
+  Future<Map<String, dynamic>> uploadStyleSample({
+    required String familyId,
+    required String targetUserId,
+    required Uint8List bytes,
+    required String filename,
+  }) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/families/$familyId/style-samples/upload',
+        data: FormData.fromMap({
+          'file': MultipartFile.fromBytes(bytes, filename: filename),
+          'title': filename,
+          'target_user_id': targetUserId,
+        }),
+        options: Options(contentType: 'multipart/form-data'),
+      );
+      return response.data ?? <String, dynamic>{};
+    } on DioException catch (error) {
+      throw _apiException(error);
+    }
+  }
+
+  Future<void> deleteStyleSample(String sampleId) =>
+      _delete('/style-samples/$sampleId');
 
   Future<Map<String, dynamic>> saveStyleProfile({
     required String familyId,
@@ -376,11 +434,61 @@ class ApiClient {
   Future<Map<String, dynamic>> createVoiceEnrollment({
     required String consentId,
     required List<String> allowedRecipientIds,
+    String? sampleMediaId,
+    String? provider,
   }) =>
       _post('/voice-profiles/enrollment', {
         'consent_id': consentId,
-        'provider': 'neutral-device-tts',
+        'provider': provider,
+        'sample_media_id': sampleMediaId,
         'allowed_recipient_ids': allowedRecipientIds,
+      });
+
+  Future<Map<String, dynamic>> verifyVoiceEnrollment(String profileId) =>
+      _post('/voice-profiles/$profileId/verify-consent', const {});
+
+  Future<Map<String, dynamic>> revokeVoiceProfile(String profileId) =>
+      _post('/voice-profiles/$profileId/revoke', const {});
+
+  Future<Uint8List?> synthesizeVoice(String profileId, String text) async {
+    try {
+      final response = await _dio.post<List<int>>(
+        '/voice-profiles/$profileId/synthesize',
+        data: {'text': text},
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return Uint8List.fromList(response.data ?? const []);
+    } on DioException catch (error) {
+      if (error.error is ApiException &&
+          (error.error as ApiException).code == 'VOICE_DEVICE_FALLBACK') {
+        return null;
+      }
+      throw _apiException(error);
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> familyContacts(String familyId) =>
+      _getList('/families/$familyId/contacts');
+
+  Future<List<Map<String, dynamic>>> callEvents(String familyId) =>
+      _getList('/families/$familyId/call-events');
+
+  Future<Map<String, dynamic>> createCallEvent(
+    String familyId,
+    String calleeUserId,
+  ) =>
+      _post('/families/$familyId/call-events', {
+        'callee_user_id': calleeUserId,
+      });
+
+  Future<Map<String, dynamic>> finishCallEvent(
+    String eventId, {
+    String status = 'completed',
+    int? durationSeconds,
+  }) =>
+      _patch('/call-events/$eventId', {
+        'status': status,
+        'duration_seconds': durationSeconds,
       });
 
   Future<Map<String, dynamic>> adminOverview(String familyId) =>

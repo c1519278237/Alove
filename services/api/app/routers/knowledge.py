@@ -1,12 +1,26 @@
-from fastapi import APIRouter, Depends
+import json
+
+import httpx
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..ai.embeddings import build_embedding_service, local_hash_embedding
+from ..ai.retrieval import retrieve_family_context
+from ..config import get_settings
 from ..database import get_db
 from ..deps import get_current_user, require_membership
-from ..errors import forbidden, not_found
+from ..document_ingest import read_uploaded_document
+from ..errors import AppError, forbidden, not_found
 from ..models import KnowledgeChunk, KnowledgeDocument, Memory, User
-from ..schemas import KnowledgeCreate, KnowledgeOut, MemoryCreate, MemoryOut, MemoryPatch
+from ..schemas import (
+    KnowledgeCreate,
+    KnowledgeOut,
+    KnowledgeSearchResult,
+    MemoryCreate,
+    MemoryOut,
+    MemoryPatch,
+)
 from ..security import decrypt_text, encrypt_text, utc_now
 
 router = APIRouter(tags=["knowledge"])
@@ -50,6 +64,59 @@ def _knowledge_out(document: KnowledgeDocument) -> KnowledgeOut:
     )
 
 
+def _persist_document(
+    db: Session,
+    *,
+    family_id: str,
+    owner_user_id: str,
+    title: str,
+    content: str,
+    source_type: str,
+    visibility_scope: str,
+) -> KnowledgeDocument:
+    document = KnowledgeDocument(
+        family_id=family_id,
+        owner_user_id=owner_user_id,
+        title=title,
+        content_encrypted=encrypt_text(content) or "",
+        source_type=source_type,
+        visibility_scope=visibility_scope,
+    )
+    db.add(document)
+    db.flush()
+    chunks = _chunk_text(content)
+    settings = get_settings()
+    try:
+        embedding_result = build_embedding_service(settings).embed(
+            [f"{title}\n{chunk}" for chunk in chunks]
+        )
+    except (httpx.HTTPError, KeyError, TypeError, ValueError):
+        embedding_result = None
+    for index, chunk in enumerate(chunks):
+        vector = (
+            embedding_result.vectors[index]
+            if embedding_result is not None
+            else local_hash_embedding(f"{title}\n{chunk}", settings.embedding_dimensions)
+        )
+        model = (
+            embedding_result.model
+            if embedding_result is not None
+            else f"local-hash-ngram-v1-{settings.embedding_dimensions}"
+        )
+        db.add(
+            KnowledgeChunk(
+                document_id=document.id,
+                family_id=family_id,
+                chunk_index=index,
+                content_encrypted=encrypt_text(chunk) or "",
+                token_count=max(1, len(chunk) // 2),
+                embedding_json=json.dumps(vector, separators=(",", ":")),
+                embedding_model=model,
+            )
+        )
+    return document
+
+
 def _memory_out(memory: Memory) -> MemoryOut:
     return MemoryOut(
         id=memory.id,
@@ -74,28 +141,123 @@ def create_knowledge(
     db: Session = Depends(get_db),
 ) -> KnowledgeOut:
     require_membership(db, family_id, user.id)
-    document = KnowledgeDocument(
+    document = _persist_document(
+        db,
         family_id=family_id,
         owner_user_id=user.id,
         title=payload.title,
-        content_encrypted=encrypt_text(payload.content) or "",
+        content=payload.content,
         source_type=payload.source_type,
         visibility_scope=payload.visibility_scope,
     )
-    db.add(document)
-    db.flush()
-    for index, chunk in enumerate(_chunk_text(payload.content)):
-        db.add(
-            KnowledgeChunk(
-                document_id=document.id,
-                family_id=family_id,
-                chunk_index=index,
-                content_encrypted=encrypt_text(chunk) or "",
-                token_count=max(1, len(chunk) // 2),
-            )
-        )
     db.commit()
     return _knowledge_out(document)
+
+
+@router.post(
+    "/families/{family_id}/knowledge/upload",
+    response_model=KnowledgeOut,
+    status_code=201,
+)
+async def upload_knowledge(
+    family_id: str,
+    file: UploadFile = File(...),
+    title: str | None = Form(default=None),
+    visibility_scope: str = Form(default="family"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> KnowledgeOut:
+    require_membership(db, family_id, user.id)
+    if visibility_scope not in {"private", "family", "elder_only", "child_only"}:
+        from ..errors import AppError
+
+        raise AppError("INVALID_VISIBILITY", "资料可见范围不正确", 422)
+    content = await read_uploaded_document(file, max_bytes=get_settings().knowledge_max_bytes)
+    if not content:
+        from ..errors import AppError
+
+        raise AppError("EMPTY_DOCUMENT", "文件中没有可提取的文字", 422)
+    document = _persist_document(
+        db,
+        family_id=family_id,
+        owner_user_id=user.id,
+        title=(title or file.filename or "家庭资料")[:160],
+        content=content[:200_000],
+        source_type="upload",
+        visibility_scope=visibility_scope,
+    )
+    db.commit()
+    return _knowledge_out(document)
+
+
+@router.get(
+    "/families/{family_id}/knowledge/search",
+    response_model=list[KnowledgeSearchResult],
+)
+def search_knowledge(
+    family_id: str,
+    query: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[KnowledgeSearchResult]:
+    require_membership(db, family_id, user.id)
+    evidence = retrieve_family_context(
+        db,
+        family_id=family_id,
+        user_id=user.id,
+        query=query[:500],
+        limit=8,
+    )
+    return [
+        KnowledgeSearchResult(
+            source_type=item.source_type,
+            source_id=item.source_id,
+            title=item.title,
+            excerpt=item.excerpt,
+            score=item.score,
+        )
+        for item in evidence
+    ]
+
+
+@router.post("/families/{family_id}/knowledge/reindex")
+def reindex_knowledge(
+    family_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, int | str]:
+    """Rebuild all active family chunk vectors after changing embedding models."""
+
+    member = require_membership(db, family_id, user.id)
+    if member.role not in {"admin", "child"}:
+        raise forbidden()
+    chunks = db.scalars(
+        select(KnowledgeChunk).where(
+            KnowledgeChunk.family_id == family_id,
+            KnowledgeChunk.status == "active",
+        )
+    ).all()
+    if not chunks:
+        return {"chunks": 0, "model": "none"}
+    documents = {
+        row.id: row
+        for row in db.scalars(
+            select(KnowledgeDocument).where(KnowledgeDocument.family_id == family_id)
+        ).all()
+    }
+    texts = [
+        f"{documents[chunk.document_id].title}\n{decrypt_text(chunk.content_encrypted) or ''}"
+        for chunk in chunks
+    ]
+    try:
+        result = build_embedding_service(get_settings()).embed(texts)
+    except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+        raise AppError("EMBEDDING_PROVIDER_ERROR", "向量服务暂时无法重建知识索引", 502) from exc
+    for chunk, vector in zip(chunks, result.vectors, strict=True):
+        chunk.embedding_json = json.dumps(vector, separators=(",", ":"))
+        chunk.embedding_model = result.model
+    db.commit()
+    return {"chunks": len(chunks), "model": result.model}
 
 
 @router.get("/families/{family_id}/knowledge", response_model=list[KnowledgeOut])
@@ -145,6 +307,7 @@ def delete_knowledge(
     for chunk in chunks:
         chunk.status = "deleted"
         chunk.content_encrypted = encrypt_text("[deleted]") or ""
+        chunk.embedding_json = None
     db.commit()
     return None
 

@@ -22,6 +22,7 @@ from ..models import (
     Message,
     Reminder,
     SmsCode,
+    StyleSample,
     User,
     UserProfile,
     VoiceProfile,
@@ -358,6 +359,12 @@ def delete_me(user: User = Depends(get_current_user), db: Session = Depends(get_
         profile.status = "revoked"
         profile.deleted_at = utc_now()
         profile.provider_voice_ref_encrypted = encrypt_text("[deleted]") or ""
+    for sample in db.scalars(
+        select(StyleSample).where(StyleSample.owner_user_id == user.id)
+    ).all():
+        sample.status = "deleted"
+        sample.deleted_at = utc_now()
+        sample.content_encrypted = encrypt_text("[deleted]") or ""
     owned_media = db.scalars(
         select(MediaObject).where(MediaObject.owner_user_id == user.id)
     ).all()

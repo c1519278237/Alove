@@ -36,6 +36,26 @@ class Settings(BaseSettings):
     ai_temperature: float = 0.35
     ai_input_cost_per_million_usd: float = 0.0
     ai_output_cost_per_million_usd: float = 0.0
+    ai_daily_request_limit: int = 200
+    ai_daily_token_limit: int = 200_000
+    ai_min_interval_seconds: float = 1.0
+
+    embedding_provider: str = "local_hash"
+    embedding_base_url: str = "https://api.openai.com/v1"
+    embedding_api_key: str | None = None
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 384
+    embedding_timeout_seconds: float = 30.0
+
+    voice_provider: str = "device_tts"
+    voice_webhook_url: str | None = None
+    voice_webhook_token: str | None = None
+    voice_timeout_seconds: float = 60.0
+    voice_max_text_chars: int = 500
+    dashscope_api_key: str | None = None
+    dashscope_base_url: str = "https://dashscope.aliyuncs.com/api/v1"
+    dashscope_voice_model: str = "qwen3-tts-vc-2026-01-22"
+    knowledge_max_bytes: int = 10 * 1024 * 1024
 
     sms_provider: str = "console"
     sms_webhook_url: str | None = None

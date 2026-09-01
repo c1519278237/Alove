@@ -14,6 +14,7 @@ from .jobs import care_report_scheduler
 from .routers import (
     admin,
     auth,
+    calls,
     care,
     consents,
     conversations,
@@ -127,6 +128,7 @@ app.include_router(realtime.router, prefix=API_PREFIX)
 app.include_router(knowledge.router, prefix=API_PREFIX)
 app.include_router(media.router, prefix=API_PREFIX)
 app.include_router(care.router, prefix=API_PREFIX)
+app.include_router(calls.router, prefix=API_PREFIX)
 app.include_router(reminders.router, prefix=API_PREFIX)
 app.include_router(voice.router, prefix=API_PREFIX)
 app.include_router(styles.router, prefix=API_PREFIX)

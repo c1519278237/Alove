@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -50,6 +51,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   bool _shareSummary = false;
   String? _error;
   _PendingImage? _pendingImage;
+  String? _voiceProfileId;
 
   @override
   void initState() {
@@ -70,10 +72,18 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   Future<void> _startConversation() async {
     try {
       final familyId = ref.read(sessionProvider).familyId!;
-      final result =
-          await ref.read(apiClientProvider).createConversation(familyId);
+      final api = ref.read(apiClientProvider);
+      final result = await api.createConversation(familyId);
+      final profiles = await api.voiceProfiles();
+      final readyProfiles = profiles.where(
+        (item) => const {'active', 'ready', 'ready_device_fallback'}
+            .contains(item['status']),
+      );
       setState(() {
         _conversationId = result['id'] as String;
+        _voiceProfileId = readyProfiles.isEmpty
+            ? null
+            : readyProfiles.first['id'] as String?;
         _busy = false;
         _messages.add(
           const _ChatBubble(
@@ -172,7 +182,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           ),
         ),
       );
-      await _tts.speak(responseText);
+      await _speak(responseText);
     } catch (error) {
       setState(() {
         _error = error.toString();
@@ -181,6 +191,25 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _speak(String text) async {
+    if (_voiceProfileId != null) {
+      try {
+        final bytes = await ref
+            .read(apiClientProvider)
+            .synthesizeVoice(_voiceProfileId!, text);
+        if (bytes != null && bytes.isNotEmpty) {
+          final player = AudioPlayer();
+          await player.play(BytesSource(bytes));
+          player.onPlayerComplete.first.then((_) => player.dispose());
+          return;
+        }
+      } catch (_) {
+        // A voice provider outage must not block the elder from hearing a reply.
+      }
+    }
+    await _tts.speak(text);
   }
 
   Future<void> _pickImage() async {

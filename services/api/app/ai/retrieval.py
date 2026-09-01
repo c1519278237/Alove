@@ -1,12 +1,15 @@
+import json
 import re
 from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..deps import require_membership
 from ..models import Consent, KnowledgeChunk, KnowledgeDocument, Memory
 from ..security import decrypt_text, utc_now
+from .embeddings import build_embedding_service, cosine_similarity, local_hash_embedding
 
 
 @dataclass(slots=True)
@@ -74,6 +77,11 @@ def retrieve_family_context(
 ) -> list[Evidence]:
     member = require_membership(db, family_id, user_id)
     candidates: list[Evidence] = []
+    settings = get_settings()
+    try:
+        query_vector = build_embedding_service(settings).embed([query]).vectors[0]
+    except Exception:
+        query_vector = local_hash_embedding(query, settings.embedding_dimensions)
     documents = db.scalars(
         select(KnowledgeDocument).where(
             KnowledgeDocument.family_id == family_id,
@@ -109,7 +117,19 @@ def retrieve_family_context(
         for chunk in chunks:
             document = visible_documents[chunk.document_id]
             content = decrypt_text(chunk.content_encrypted) or ""
-            score = _score(query, document.title + " " + content)
+            lexical_score = _score(query, document.title + " " + content)
+            vector: list[float] = []
+            if chunk.embedding_json:
+                try:
+                    vector = [float(value) for value in json.loads(chunk.embedding_json)]
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    vector = []
+            if not vector or len(vector) != len(query_vector):
+                vector = local_hash_embedding(
+                    document.title + "\n" + content, len(query_vector)
+                )
+            vector_score = max(0.0, cosine_similarity(query_vector, vector))
+            score = round(0.65 * vector_score + 0.35 * lexical_score, 6)
             if score > 0:
                 candidates.append(
                     Evidence("knowledge_chunk", chunk.id, document.title, content[:320], score)
@@ -118,7 +138,15 @@ def retrieve_family_context(
             if document_id in chunked_document_ids:
                 continue
             content = decrypt_text(document.content_encrypted) or ""
-            score = _score(query, document.title + " " + content)
+            lexical_score = _score(query, document.title + " " + content)
+            vector_score = max(
+                0.0,
+                cosine_similarity(
+                    query_vector,
+                    local_hash_embedding(document.title + "\n" + content, len(query_vector)),
+                ),
+            )
+            score = round(0.65 * vector_score + 0.35 * lexical_score, 6)
             if score > 0:
                 candidates.append(
                     Evidence("knowledge", document.id, document.title, content[:320], score)
@@ -134,7 +162,12 @@ def retrieve_family_context(
     ).all()
     for memory in memories:
         content = decrypt_text(memory.content_encrypted) or ""
-        score = _score(query, content)
+        lexical_score = _score(query, content)
+        vector_score = max(
+            0.0,
+            cosine_similarity(query_vector, local_hash_embedding(content, len(query_vector))),
+        )
+        score = round(0.65 * vector_score + 0.35 * lexical_score, 6)
         if score > 0:
             candidates.append(Evidence("memory", memory.id, "已确认记忆", content[:240], score))
 
