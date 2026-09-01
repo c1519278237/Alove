@@ -19,15 +19,27 @@ class LLMResult:
 
 
 class LLMProvider(Protocol):
-    async def chat(self, messages: list[dict[str, str]]) -> LLMResult: ...
+    async def chat(self, messages: list[dict[str, Any]]) -> LLMResult: ...
 
 
 class DemoLLMProvider:
     """Safe deterministic provider used when no external key is configured."""
 
-    async def chat(self, messages: list[dict[str, str]]) -> LLMResult:
+    async def chat(self, messages: list[dict[str, Any]]) -> LLMResult:
+        def text_content(item: dict[str, Any]) -> str:
+            content = item.get("content", "")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                return " ".join(
+                    part.get("text", "")
+                    for part in content
+                    if isinstance(part, dict) and part.get("type") == "text"
+                )
+            return ""
+
         user_text = next(
-            (item["content"] for item in reversed(messages) if item["role"] == "user"), ""
+            (text_content(item) for item in reversed(messages) if item["role"] == "user"), ""
         )
         if any(word in user_text for word in ("孤单", "想孩子", "没人说话", "闷")):
             answer = (
@@ -62,7 +74,7 @@ class OpenAICompatibleProvider:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    async def chat(self, messages: list[dict[str, str]]) -> LLMResult:
+    async def chat(self, messages: list[dict[str, Any]]) -> LLMResult:
         started = time.perf_counter()
         url = self.settings.ai_base_url.rstrip("/") + "/chat/completions"
         headers = {
@@ -80,7 +92,10 @@ class OpenAICompatibleProvider:
             response = await client.post(url, headers=headers, json=body)
             response.raise_for_status()
             payload = response.json()
-        text = payload["choices"][0]["message"]["content"].strip()
+        content = payload["choices"][0]["message"].get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("AI provider returned no user-visible content")
+        text = content.strip()
         latency_ms = round((time.perf_counter() - started) * 1000)
         return LLMResult(
             text=text,

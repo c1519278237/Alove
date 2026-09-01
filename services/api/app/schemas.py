@@ -168,6 +168,7 @@ class SharingLevelPatch(BaseModel):
 
 class ChatMessageCreate(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
+    image_media_id: str | None = None
 
 
 class MessageOut(BaseModel):

@@ -136,9 +136,13 @@ class ApiClient {
 
   Future<Map<String, dynamic>> sendMessage(
     String conversationId,
-    String text,
-  ) {
-    return _post('/conversations/$conversationId/messages', {'text': text});
+    String text, {
+    String? imageMediaId,
+  }) {
+    return _post('/conversations/$conversationId/messages', {
+      'text': text,
+      'image_media_id': imageMediaId,
+    });
   }
 
   Future<Map<String, dynamic>> setConversationSharing(
@@ -190,6 +194,24 @@ class ApiClient {
       options: Options(contentType: 'multipart/form-data'),
     );
     return response.data ?? <String, dynamic>{};
+  }
+
+  Future<Map<String, dynamic>> uploadImage({
+    required Uint8List bytes,
+    required String filename,
+  }) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/media/image',
+        data: FormData.fromMap({
+          'file': MultipartFile.fromBytes(bytes, filename: filename),
+        }),
+        options: Options(contentType: 'multipart/form-data'),
+      );
+      return response.data ?? <String, dynamic>{};
+    } on DioException catch (error) {
+      throw _apiException(error);
+    }
   }
 
   Future<Uint8List> downloadMedia(String mediaId) async {

@@ -7,7 +7,8 @@ os.environ["APP_ENV"] = "test"
 os.environ["APP_SECRET_KEY"] = "test-only-secret-with-more-than-32-bytes"
 os.environ["DATABASE_URL"] = "sqlite:///./test_guiyin.db"
 os.environ["SMS_PROVIDER"] = "console"
-os.environ.pop("AI_API_KEY", None)
+# Never let the local .env file make automated tests consume paid API quota.
+os.environ["AI_API_KEY"] = ""
 
 from app.database import Base, engine  # noqa: E402
 from app.main import app  # noqa: E402

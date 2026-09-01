@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -19,12 +22,21 @@ class _ChatBubble {
     required this.fromUser,
     this.safetyNotice,
     this.sources = const [],
+    this.imageBytes,
   });
 
   final String text;
   final bool fromUser;
   final String? safetyNotice;
   final List<Map<String, dynamic>> sources;
+  final Uint8List? imageBytes;
+}
+
+class _PendingImage {
+  const _PendingImage({required this.name, required this.bytes});
+
+  final String name;
+  final Uint8List bytes;
 }
 
 class _ConversationScreenState extends ConsumerState<ConversationScreen> {
@@ -37,6 +49,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   bool _listening = false;
   bool _shareSummary = false;
   String? _error;
+  _PendingImage? _pendingImage;
 
   @override
   void initState() {
@@ -107,17 +120,42 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   Future<void> _send() async {
-    final text = _input.text.trim();
-    if (text.isEmpty || _conversationId == null || _busy) return;
+    final pendingImage = _pendingImage;
+    final typedText = _input.text.trim();
+    if ((typedText.isEmpty && pendingImage == null) ||
+        _conversationId == null ||
+        _busy) {
+      return;
+    }
+    final text = typedText.isEmpty ? '请帮我看看这张图片' : typedText;
     setState(() {
-      _messages.add(_ChatBubble(text, fromUser: true));
+      _messages.add(
+        _ChatBubble(
+          text,
+          fromUser: true,
+          imageBytes: pendingImage?.bytes,
+        ),
+      );
       _input.clear();
+      _pendingImage = null;
       _busy = true;
       _error = null;
     });
     try {
-      final result =
-          await ref.read(apiClientProvider).sendMessage(_conversationId!, text);
+      final api = ref.read(apiClientProvider);
+      String? imageMediaId;
+      if (pendingImage != null) {
+        final media = await api.uploadImage(
+          bytes: pendingImage.bytes,
+          filename: pendingImage.name,
+        );
+        imageMediaId = media['id'] as String;
+      }
+      final result = await api.sendMessage(
+        _conversationId!,
+        text,
+        imageMediaId: imageMediaId,
+      );
       final assistant = result['assistant_message'] as Map<String, dynamic>;
       final responseText = assistant['text'] as String;
       final sources = (result['evidence'] as List<dynamic>? ?? const [])
@@ -136,10 +174,55 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       );
       await _tts.speak(responseText);
     } catch (error) {
-      setState(() => _error = error.toString());
+      setState(() {
+        _error = error.toString();
+        _pendingImage ??= pendingImage;
+      });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _pickImage() async {
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('使用AI查看图片'),
+        content: const Text(
+          '图片会加密保存在本机服务，并发送给当前配置的AI模型分析。请勿上传身份证、银行卡、验证码或其他不必要的敏感信息。AI识图可能出错，不能据此诊断疾病或决定用药。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('选择图片'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true || !mounted) return;
+    final selected = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    if (selected == null || selected.files.isEmpty || !mounted) return;
+    final file = selected.files.single;
+    final bytes = file.bytes;
+    if (bytes == null) {
+      setState(() => _error = '无法读取所选图片，请重新选择');
+      return;
+    }
+    if (bytes.length > 5 * 1024 * 1024) {
+      setState(() => _error = '图片不能超过5MB');
+      return;
+    }
+    setState(() {
+      _pendingImage = _PendingImage(name: file.name, bytes: bytes);
+      _error = null;
+    });
   }
 
   Future<void> _endConversation() async {
@@ -229,6 +312,18 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          if (message.imageBytes != null) ...[
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.memory(
+                                message.imageBytes!,
+                                width: 220,
+                                height: 160,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                          ],
                           Text(
                             message.text,
                             style: const TextStyle(fontSize: 20),
@@ -268,6 +363,45 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 child: Text(_error!, style: const TextStyle(color: Colors.red)),
               ),
             if (_busy) const LinearProgressIndicator(),
+            if (_pendingImage != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE6F3F1),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.memory(
+                          _pendingImage!.bytes,
+                          width: 64,
+                          height: 64,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          _pendingImage!.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: '移除图片',
+                        onPressed: _busy
+                            ? null
+                            : () => setState(() => _pendingImage = null),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.all(14),
               child: Row(
@@ -277,6 +411,13 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                     tooltip: _listening ? '结束说话' : '按下说话',
                     iconSize: 34,
                     icon: Icon(_listening ? Icons.stop : Icons.mic),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton.filledTonal(
+                    onPressed: _busy ? null : _pickImage,
+                    tooltip: '选择图片让AI看看',
+                    iconSize: 30,
+                    icon: const Icon(Icons.add_photo_alternate_outlined),
                   ),
                   const SizedBox(width: 10),
                   Expanded(

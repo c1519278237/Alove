@@ -20,6 +20,7 @@ from ..schemas import (
     SharingLevelPatch,
 )
 from ..security import decrypt_text, encrypt_text, utc_now
+from .media import read_owned_image
 
 router = APIRouter(tags=["conversations"])
 
@@ -64,16 +65,28 @@ async def execute_chat_turn(
     *,
     conversation: Conversation,
     text: str,
+    image_media_id: str | None = None,
 ) -> tuple[Message, Message, object]:
     if conversation.status != "active":
         raise AppError("CONVERSATION_CLOSED", "该对话已经结束", 409)
-    result = await run_turn(db, conversation=conversation, user_text=text)
+    image = (
+        read_owned_image(db, image_media_id, conversation.owner_user_id)
+        if image_media_id is not None
+        else None
+    )
+    result = await run_turn(
+        db,
+        conversation=conversation,
+        user_text=text,
+        image=image,
+    )
     retention = utc_now() + timedelta(days=90)
     user_message = Message(
         conversation_id=conversation.id,
         role="user",
         text_encrypted=encrypt_text(text) or "",
-        source="app",
+        audio_object_key=image_media_id,
+        source="app-vision" if image_media_id else "app",
         safety_labels=result.labels,
         retention_until=retention,
     )
@@ -201,7 +214,10 @@ async def create_message(
 ) -> ChatTurnOut:
     conversation = require_owned_conversation(db, conversation_id, user.id)
     user_message, assistant_message, result = await execute_chat_turn(
-        db, conversation=conversation, text=payload.text
+        db,
+        conversation=conversation,
+        text=payload.text,
+        image_media_id=payload.image_media_id,
     )
     return ChatTurnOut(
         user_message=message_out(user_message),

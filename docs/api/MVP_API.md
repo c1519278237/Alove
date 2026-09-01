@@ -8,7 +8,7 @@ API 前缀为 `/api/v1`，完整交互契约可在服务启动后通过 `/docs` 
 2. 子女调用 `POST /families` 创建家庭，再调用 `/families/{id}/invites` 生成老人邀请码。
 3. 老人调用 `POST /family-invites/{code}/accept` 加入家庭。
 4. 老人调用 `POST /consents` 授予 `conversation_summary` 或 `care_need_sharing`。
-5. 老人创建对话，并调用 `/conversations/{id}/messages` 与 AI 交互。
+5. 老人创建对话，并调用 `/conversations/{id}/messages` 与 AI 进行文字或图片交互。
 6. 老人将对话分享级别设为 `family_summary`，子女才能基于有效授权生成关怀摘要。
 
 ## 主要能力分组
@@ -17,6 +17,7 @@ API 前缀为 `/api/v1`，完整交互契约可在服务启动后通过 `/docs` 
 - `/families/{family_id}/knowledge`：家庭 RAG 资料上传、分块和可见范围隔离。
 - `/memories`：候选记忆确认、纠正、拒绝与删除；只有已确认记忆参与检索。
 - `/family-messages`、`/media/audio`：文字或加密音频留言、播放状态闭环。
+- `/media/image`：校验并加密保存 PNG、JPEG、WebP 或 GIF；返回的媒体 ID 可作为 `image_media_id` 随对话消息提交。
 - `/reminders`：提醒创建、修改以及 played/confirmed/skipped/expired 事件。
 - `/elders/{elder_id}/care-reports`：授权周报生成、列表和准确度反馈。
 - `/families/{family_id}/style-profile`：经老人授权的家人表达风格档案。

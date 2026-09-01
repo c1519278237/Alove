@@ -1,3 +1,5 @@
+import base64
+
 from conftest import auth, login
 from test_core_flow import bootstrap_family, create_consent
 
@@ -5,9 +7,7 @@ from test_core_flow import bootstrap_family, create_consent
 def test_style_memory_admin_risk_and_reminder_flow(client):
     child_token, child_id, elder_token, elder_id, family_id = bootstrap_family(client)
 
-    create_consent(
-        client, elder_token, elder_id, child_id, family_id, "style_personalization"
-    )
+    create_consent(client, elder_token, elder_id, child_id, family_id, "style_personalization")
 
     style = client.put(
         f"/api/v1/families/{family_id}/style-profile",
@@ -55,9 +55,7 @@ def test_style_memory_admin_risk_and_reminder_flow(client):
     assert memories.status_code == 200
     assert memories.json()[0]["confirmation_status"] == "pending"
     memory_id = memories.json()[0]["id"]
-    confirmed = client.post(
-        f"/api/v1/memories/{memory_id}/confirm", headers=auth(elder_token)
-    )
+    confirmed = client.post(f"/api/v1/memories/{memory_id}/confirm", headers=auth(elder_token))
     assert confirmed.json()["confirmation_status"] == "confirmed"
 
     risk_turn = client.post(
@@ -83,9 +81,7 @@ def test_style_memory_admin_risk_and_reminder_flow(client):
     assert overview.json()["open_risk_events"] == 1
     assert overview.json()["conversations_7d"] == 1
 
-    create_consent(
-        client, elder_token, elder_id, child_id, family_id, "reminder_management"
-    )
+    create_consent(client, elder_token, elder_id, child_id, family_id, "reminder_management")
     reminder = client.post(
         "/api/v1/reminders",
         headers=auth(child_token),
@@ -138,6 +134,45 @@ def test_encrypted_voice_message_access_is_limited_to_sender_and_recipient(clien
     assert denied.status_code == 404
 
 
+def test_elder_can_send_an_encrypted_image_to_vision_chat(client):
+    _, _, elder_token, _, family_id = bootstrap_family(client)
+    png_bytes = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nXsAAAAASUVORK5CYII="
+    )
+    upload = client.post(
+        "/api/v1/media/image",
+        headers=auth(elder_token),
+        files={"file": ("medicine.png", png_bytes, "image/png")},
+    )
+    assert upload.status_code == 201, upload.text
+    assert upload.json()["mime_type"] == "image/png"
+
+    invalid = client.post(
+        "/api/v1/media/image",
+        headers=auth(elder_token),
+        files={"file": ("fake.png", b"not-an-image", "image/png")},
+    )
+    assert invalid.status_code == 415
+    assert invalid.json()["error"]["code"] == "INVALID_IMAGE"
+
+    conversation = client.post(
+        "/api/v1/conversations",
+        headers=auth(elder_token),
+        json={"family_id": family_id, "sharing_level": "private"},
+    ).json()
+    response = client.post(
+        f"/api/v1/conversations/{conversation['id']}/messages",
+        headers=auth(elder_token),
+        json={
+            "text": "请告诉我这张图片里有什么",
+            "image_media_id": upload.json()["id"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["user_message"]["source"] == "app-vision"
+    assert response.json()["assistant_message"]["text"]
+
+
 def test_rag_and_style_are_blocked_until_elder_grants_them(client):
     child_token, child_id, elder_token, elder_id, family_id = bootstrap_family(client)
     created = client.post(
@@ -170,12 +205,8 @@ def test_rag_and_style_are_blocked_until_elder_grants_them(client):
     )
     assert before.json()["evidence"] == []
 
-    create_consent(
-        client, elder_token, elder_id, child_id, family_id, "family_knowledge"
-    )
-    create_consent(
-        client, elder_token, elder_id, child_id, family_id, "style_personalization"
-    )
+    create_consent(client, elder_token, elder_id, child_id, family_id, "family_knowledge")
+    create_consent(client, elder_token, elder_id, child_id, family_id, "style_personalization")
     after = client.post(
         f"/api/v1/conversations/{conversation['id']}/messages",
         headers=auth(elder_token),

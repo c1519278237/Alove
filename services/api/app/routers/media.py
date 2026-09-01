@@ -16,6 +16,12 @@ from ..security import decrypt_bytes, encrypt_bytes, new_id
 
 router = APIRouter(prefix="/media", tags=["media"])
 
+_IMAGE_SIGNATURES: tuple[tuple[str, bytes], ...] = (
+    ("image/png", b"\x89PNG\r\n\x1a\n"),
+    ("image/jpeg", b"\xff\xd8\xff"),
+    ("image/gif", b"GIF8"),
+)
+
 
 def _storage_root() -> Path:
     root = Path(get_settings().media_storage_dir).resolve()
@@ -29,6 +35,15 @@ def media_path(storage_key: str) -> Path:
     if root != candidate and root not in candidate.parents:
         raise AppError("INVALID_MEDIA_KEY", "媒体文件路径无效", 500)
     return candidate
+
+
+def _detected_image_type(payload: bytes) -> str | None:
+    for mime_type, signature in _IMAGE_SIGNATURES:
+        if payload.startswith(signature):
+            return mime_type
+    if len(payload) >= 12 and payload.startswith(b"RIFF") and payload[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 @router.post("/audio", response_model=MediaObjectOut, status_code=201)
@@ -62,6 +77,56 @@ async def upload_audio(
     db.add(media)
     db.commit()
     return media
+
+
+@router.post("/image", response_model=MediaObjectOut, status_code=201)
+async def upload_image(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MediaObject:
+    settings = get_settings()
+    max_bytes = min(settings.media_max_bytes, 5 * 1024 * 1024)
+    payload = await file.read(max_bytes + 1)
+    if not payload:
+        raise AppError("INVALID_IMAGE", "图片文件不能为空", 422)
+    if len(payload) > max_bytes:
+        raise AppError("MEDIA_TOO_LARGE", "图片不能超过5MB", 413)
+    detected_type = _detected_image_type(payload)
+    if detected_type is None:
+        raise AppError("INVALID_IMAGE", "仅支持PNG、JPEG、WebP或GIF图片", 415)
+    media_id = new_id()
+    storage_key = f"image/{media_id}.bin"
+    destination = media_path(storage_key)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(encrypt_bytes(payload))
+    media = MediaObject(
+        id=media_id,
+        owner_user_id=user.id,
+        storage_key=storage_key,
+        mime_type=detected_type,
+        original_name=(file.filename or "ai-image")[:255],
+        size_bytes=len(payload),
+    )
+    db.add(media)
+    db.commit()
+    return media
+
+
+def read_owned_image(db: Session, media_id: str, user_id: str) -> tuple[str, bytes]:
+    media = db.get(MediaObject, media_id)
+    if (
+        media is None
+        or media.status != "active"
+        or media.owner_user_id != user_id
+        or not media.mime_type.startswith("image/")
+    ):
+        raise not_found("图片")
+    try:
+        payload = decrypt_bytes(media_path(media.storage_key).read_bytes())
+    except (FileNotFoundError, InvalidToken) as exc:
+        raise not_found("图片") from exc
+    return media.mime_type, payload
 
 
 def _can_read_media(db: Session, media: MediaObject, user_id: str) -> bool:
