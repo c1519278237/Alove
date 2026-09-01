@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/child_navigation_bar.dart';
 import '../../core/session.dart';
 
 class AdminDashboardScreen extends ConsumerStatefulWidget {
@@ -87,6 +88,9 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('运营与安全面板')),
+      bottomNavigationBar: const ChildNavigationBar(
+        current: ChildSection.admin,
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api_client.dart';
+import '../../core/child_navigation_bar.dart';
 import '../../core/session.dart';
 
 class ChildHomeScreen extends ConsumerStatefulWidget {
@@ -17,7 +18,7 @@ class _ChildHomeScreenState extends ConsumerState<ChildHomeScreen> {
   String? _elderId;
   String? _elderName;
   String? _error;
-  String? _inviteCode;
+  List<Map<String, dynamic>> _elders = const [];
   List<Map<String, dynamic>> _needs = const [];
   List<Map<String, dynamic>> _reports = const [];
 
@@ -30,14 +31,23 @@ class _ChildHomeScreenState extends ConsumerState<ChildHomeScreen> {
   Future<void> _load() async {
     final familyId = ref.read(sessionProvider).familyId;
     if (familyId == null) return;
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final api = ref.read(apiClientProvider);
       final members = await api.familyMembers(familyId);
-      final elders =
-          members.where((member) => member['role'] == 'elder').toList();
-      if (elders.isNotEmpty) {
-        _elderId = elders.first['user_id'] as String;
-        _elderName = elders.first['display_name']?.toString() ?? '老人';
+      _elders = members.where((member) => member['role'] == 'elder').toList();
+      if (_elders.isNotEmpty) {
+        final selected = _elders.cast<Map<String, dynamic>?>().firstWhere(
+              (member) => member?['user_id'] == _elderId,
+              orElse: () => _elders.first,
+            )!;
+        _elderId = selected['user_id'] as String;
+        _elderName = selected['display_name']?.toString() ?? '老人';
         try {
           _needs = await api.elderNeeds(_elderId!);
           _reports = await api.elderReports(_elderId!);
@@ -45,6 +55,11 @@ class _ChildHomeScreenState extends ConsumerState<ChildHomeScreen> {
           if (error.code != 'CONSENT_REQUIRED') rethrow;
           _error = '老人尚未授权查看需求或关怀摘要。请先当面说明用途并由老人本人授权。';
         }
+      } else {
+        _elderId = null;
+        _elderName = null;
+        _needs = const [];
+        _reports = const [];
       }
     } catch (error) {
       _error = error.toString();
@@ -53,18 +68,10 @@ class _ChildHomeScreenState extends ConsumerState<ChildHomeScreen> {
     }
   }
 
-  Future<void> _createInvite() async {
-    final familyId = ref.read(sessionProvider).familyId!;
-    try {
-      final result = await ref.read(apiClientProvider).createInvite(
-            familyId,
-            role: 'elder',
-            relationshipLabel: '父母',
-          );
-      setState(() => _inviteCode = result['code'] as String?);
-    } catch (error) {
-      setState(() => _error = error.toString());
-    }
+  Future<void> _selectElder(String? elderId) async {
+    if (elderId == null || elderId == _elderId) return;
+    setState(() => _elderId = elderId);
+    await _load();
   }
 
   Future<void> _generateReport() async {
@@ -114,6 +121,9 @@ class _ChildHomeScreenState extends ConsumerState<ChildHomeScreen> {
           ),
         ],
       ),
+      bottomNavigationBar: const ChildNavigationBar(
+        current: ChildSection.home,
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
@@ -123,6 +133,28 @@ class _ChildHomeScreenState extends ConsumerState<ChildHomeScreen> {
                 children: [
                   if (_elderId == null) _buildInviteCard(context),
                   if (_elderId != null) ...[
+                    if (_elders.length > 1) ...[
+                      DropdownButtonFormField<String>(
+                        initialValue: _elderId,
+                        decoration: const InputDecoration(
+                          labelText: '当前查看的老人',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.elderly),
+                        ),
+                        items: _elders
+                            .map(
+                              (elder) => DropdownMenuItem(
+                                value: elder['user_id'] as String,
+                                child: Text(
+                                  elder['display_name']?.toString() ?? '老人',
+                                ),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: _selectElder,
+                      ),
+                      const SizedBox(height: 18),
+                    ],
                     Text(
                       '$_elderName的近况',
                       style: Theme.of(context).textTheme.headlineSmall,
@@ -135,14 +167,14 @@ class _ChildHomeScreenState extends ConsumerState<ChildHomeScreen> {
                     _buildReportCard(context),
                     const SizedBox(height: 16),
                     FilledButton.tonalIcon(
-                      onPressed: () => context.push('/family-tools'),
+                      onPressed: () => context.go('/family-tools'),
                       icon: const Icon(Icons.dashboard_customize),
                       label: const Text('留言、提醒、知识库与表达风格'),
                     ),
                     if (session.role == 'admin') ...[
                       const SizedBox(height: 12),
                       OutlinedButton.icon(
-                        onPressed: () => context.push('/admin'),
+                        onPressed: () => context.go('/admin'),
                         icon: const Icon(Icons.security),
                         label: const Text('运营与安全面板'),
                       ),
@@ -173,16 +205,11 @@ class _ChildHomeScreenState extends ConsumerState<ChildHomeScreen> {
             const SizedBox(height: 10),
             const Text('邀请码 24 小时内有效。建议当面协助老人完成登录和身份确认。'),
             const SizedBox(height: 16),
-            FilledButton(onPressed: _createInvite, child: const Text('生成邀请码')),
-            if (_inviteCode != null) ...[
-              const SizedBox(height: 18),
-              SelectableText(
-                _inviteCode!,
-                textAlign: TextAlign.center,
-                style:
-                    const TextStyle(fontSize: 34, fontWeight: FontWeight.bold),
-              ),
-            ],
+            FilledButton.icon(
+              onPressed: () => context.go('/family-invite'),
+              icon: const Icon(Icons.person_add_alt_1),
+              label: const Text('前往邀请与成员管理'),
+            ),
           ],
         ),
       ),

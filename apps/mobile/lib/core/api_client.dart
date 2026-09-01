@@ -123,6 +123,10 @@ class ApiClient {
     });
   }
 
+  Future<List<Map<String, dynamic>>> familyInvites(String familyId) {
+    return _getList('/families/$familyId/invites');
+  }
+
   Future<Map<String, dynamic>> createConversation(String familyId) {
     return _post('/conversations', {
       'family_id': familyId,

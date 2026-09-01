@@ -106,6 +106,27 @@ def create_invite(
     return invite
 
 
+@router.get("/families/{family_id}/invites", response_model=list[InviteOut])
+def list_active_invites(
+    family_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[FamilyInvite]:
+    require_family_role(db, family_id, user.id, {"child", "caregiver", "admin"})
+    return list(
+        db.scalars(
+            select(FamilyInvite)
+            .where(
+                FamilyInvite.family_id == family_id,
+                FamilyInvite.accepted_by.is_(None),
+                FamilyInvite.expires_at > utc_now(),
+            )
+            .order_by(FamilyInvite.expires_at.desc())
+            .limit(20)
+        ).all()
+    )
+
+
 @router.post("/family-invites/{code}/accept", response_model=FamilyMemberOut)
 def accept_invite(
     code: str,

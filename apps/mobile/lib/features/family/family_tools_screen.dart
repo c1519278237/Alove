@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 
+import '../../core/child_navigation_bar.dart';
 import '../../core/session.dart';
 
 class FamilyToolsScreen extends ConsumerStatefulWidget {
@@ -16,6 +17,7 @@ class _FamilyToolsScreenState extends ConsumerState<FamilyToolsScreen> {
   bool _busy = false;
   String? _error;
   String? _elderId;
+  List<Map<String, dynamic>> _elders = const [];
   List<Map<String, dynamic>> _knowledge = const [];
   List<Map<String, dynamic>> _sent = const [];
   List<Map<String, dynamic>> _voiceProfiles = const [];
@@ -68,9 +70,12 @@ class _FamilyToolsScreenState extends ConsumerState<FamilyToolsScreen> {
     try {
       final api = ref.read(apiClientProvider);
       final members = await api.familyMembers(familyId);
-      final elders =
-          members.where((member) => member['role'] == 'elder').toList();
-      _elderId = elders.isEmpty ? null : elders.first['user_id'] as String?;
+      _elders = members.where((member) => member['role'] == 'elder').toList();
+      if (_elders.isEmpty) {
+        _elderId = null;
+      } else if (!_elders.any((elder) => elder['user_id'] == _elderId)) {
+        _elderId = _elders.first['user_id'] as String?;
+      }
       final results = await Future.wait([
         api.knowledge(familyId),
         api.sentMessages(),
@@ -84,6 +89,12 @@ class _FamilyToolsScreenState extends ConsumerState<FamilyToolsScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _selectElder(String? elderId) async {
+    if (elderId == null || elderId == _elderId) return;
+    setState(() => _elderId = elderId);
+    await _load();
   }
 
   Future<void> _run(Future<void> Function() action, String success) async {
@@ -236,6 +247,9 @@ class _FamilyToolsScreenState extends ConsumerState<FamilyToolsScreen> {
             ],
           ),
         ),
+        bottomNavigationBar: const ChildNavigationBar(
+          current: ChildSection.tools,
+        ),
         body: _loading
             ? const Center(child: CircularProgressIndicator())
             : Column(
@@ -251,6 +265,29 @@ class _FamilyToolsScreenState extends ConsumerState<FamilyToolsScreen> {
                       actions: [
                         TextButton(onPressed: _load, child: const Text('重试'))
                       ],
+                    ),
+                  if (_elders.length > 1)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+                      child: DropdownButtonFormField<String>(
+                        initialValue: _elderId,
+                        decoration: const InputDecoration(
+                          labelText: '当前操作的老人',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.elderly),
+                        ),
+                        items: _elders
+                            .map(
+                              (elder) => DropdownMenuItem(
+                                value: elder['user_id'] as String,
+                                child: Text(
+                                  elder['display_name']?.toString() ?? '老人',
+                                ),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: _busy ? null : _selectElder,
+                      ),
                     ),
                   if (_busy) const LinearProgressIndicator(),
                   Expanded(

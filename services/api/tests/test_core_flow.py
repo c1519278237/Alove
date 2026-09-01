@@ -56,6 +56,43 @@ def test_health_and_structured_error(client):
     assert missing_auth.headers["X-Trace-ID"]
 
 
+def test_admin_can_list_and_reuse_invite_page_for_more_elders(client):
+    child_token, _, _, _, family_id = bootstrap_family(client)
+    second_elder_token, _ = login(client, "+8613800000003", "林爷爷")
+
+    created = client.post(
+        f"/api/v1/families/{family_id}/invites",
+        headers=auth(child_token),
+        json={"role": "elder", "relationship_label": "父亲"},
+    )
+    assert created.status_code == 201, created.text
+    code = created.json()["code"]
+
+    active = client.get(
+        f"/api/v1/families/{family_id}/invites", headers=auth(child_token)
+    )
+    assert active.status_code == 200, active.text
+    assert code in {item["code"] for item in active.json()}
+
+    accepted = client.post(
+        f"/api/v1/family-invites/{code}/accept",
+        headers=auth(second_elder_token),
+        json={"code": code},
+    )
+    assert accepted.status_code == 200, accepted.text
+
+    active_after_use = client.get(
+        f"/api/v1/families/{family_id}/invites", headers=auth(child_token)
+    )
+    assert active_after_use.status_code == 200, active_after_use.text
+    assert code not in {item["code"] for item in active_after_use.json()}
+
+    members = client.get(
+        f"/api/v1/families/{family_id}/members", headers=auth(child_token)
+    )
+    assert sum(item["role"] == "elder" for item in members.json()) == 2
+
+
 def test_family_consent_ai_need_and_report_flow(client):
     child_token, child_id, elder_token, elder_id, family_id = bootstrap_family(client)
 

@@ -9,6 +9,7 @@ import 'features/admin/admin_dashboard_screen.dart';
 import 'features/care/care_need_screen.dart';
 import 'features/conversation/conversation_screen.dart';
 import 'features/family/family_tools_screen.dart';
+import 'features/family/family_invite_screen.dart';
 import 'features/home/child_home_screen.dart';
 import 'features/home/elder_home_screen.dart';
 import 'features/privacy/elder_manage_screen.dart';
@@ -77,6 +78,10 @@ final _routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/family-tools',
         builder: (context, state) => const FamilyToolsScreen(),
+      ),
+      GoRoute(
+        path: '/family-invite',
+        builder: (context, state) => const FamilyInviteScreen(),
       ),
       GoRoute(
         path: '/admin',
