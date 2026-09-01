@@ -18,68 +18,81 @@ void main() {
   runApp(const ProviderScope(child: GuiyinApp()));
 }
 
+// Keep one router instance for the lifetime of the application. Recreating the
+// router whenever SessionState changes also recreates the active login route,
+// which used to clear the SMS-code state as soon as a request started.
+final _routerProvider = Provider<GoRouter>((ref) {
+  final router = GoRouter(
+    initialLocation: '/login',
+    redirect: (context, state) {
+      final session = ref.read(sessionProvider);
+      if (session.loading) return '/loading';
+      if (!session.isAuthenticated) return '/login';
+      if (!session.hasFamily) return '/family-setup';
+      if (state.matchedLocation == '/login' ||
+          state.matchedLocation == '/loading' ||
+          state.matchedLocation == '/family-setup') {
+        return session.isElder ? '/elder' : '/child';
+      }
+      return null;
+    },
+    routes: [
+      GoRoute(
+        path: '/loading',
+        builder: (context, state) => const _LoadingScreen(),
+      ),
+      GoRoute(
+        path: '/login',
+        builder: (context, state) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: '/family-setup',
+        builder: (context, state) => const FamilySetupScreen(),
+      ),
+      GoRoute(
+        path: '/elder',
+        builder: (context, state) => const ElderHomeScreen(),
+      ),
+      GoRoute(
+        path: '/child',
+        builder: (context, state) => const ChildHomeScreen(),
+      ),
+      GoRoute(
+        path: '/conversation',
+        builder: (context, state) => const ConversationScreen(),
+      ),
+      GoRoute(
+        path: '/elder-manage',
+        builder: (context, state) => const ElderManageScreen(),
+      ),
+      GoRoute(
+        path: '/care-need',
+        builder: (context, state) => const CareNeedScreen(),
+      ),
+      GoRoute(
+        path: '/family-tools',
+        builder: (context, state) => const FamilyToolsScreen(),
+      ),
+      GoRoute(
+        path: '/admin',
+        builder: (context, state) => const AdminDashboardScreen(),
+      ),
+    ],
+  );
+
+  ref.listen<SessionState>(sessionProvider, (previous, next) {
+    router.refresh();
+  });
+  ref.onDispose(router.dispose);
+  return router;
+});
+
 class GuiyinApp extends ConsumerWidget {
   const GuiyinApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final session = ref.watch(sessionProvider);
-    final router = GoRouter(
-      initialLocation: '/login',
-      redirect: (context, state) {
-        if (session.loading) return '/loading';
-        if (!session.isAuthenticated) return '/login';
-        if (!session.hasFamily) return '/family-setup';
-        if (state.matchedLocation == '/login' ||
-            state.matchedLocation == '/loading' ||
-            state.matchedLocation == '/family-setup') {
-          return session.isElder ? '/elder' : '/child';
-        }
-        return null;
-      },
-      routes: [
-        GoRoute(
-          path: '/loading',
-          builder: (context, state) => const _LoadingScreen(),
-        ),
-        GoRoute(
-          path: '/login',
-          builder: (context, state) => const LoginScreen(),
-        ),
-        GoRoute(
-          path: '/family-setup',
-          builder: (context, state) => const FamilySetupScreen(),
-        ),
-        GoRoute(
-          path: '/elder',
-          builder: (context, state) => const ElderHomeScreen(),
-        ),
-        GoRoute(
-          path: '/child',
-          builder: (context, state) => const ChildHomeScreen(),
-        ),
-        GoRoute(
-          path: '/conversation',
-          builder: (context, state) => const ConversationScreen(),
-        ),
-        GoRoute(
-          path: '/elder-manage',
-          builder: (context, state) => const ElderManageScreen(),
-        ),
-        GoRoute(
-          path: '/care-need',
-          builder: (context, state) => const CareNeedScreen(),
-        ),
-        GoRoute(
-          path: '/family-tools',
-          builder: (context, state) => const FamilyToolsScreen(),
-        ),
-        GoRoute(
-          path: '/admin',
-          builder: (context, state) => const AdminDashboardScreen(),
-        ),
-      ],
-    );
+    final router = ref.watch(_routerProvider);
 
     return MaterialApp.router(
       title: '归音 AI 家庭关怀',

@@ -18,6 +18,7 @@ ios/Flutter/Generated.xcconfig
 qa/
 .codex_deps/
 .cache/
+.runtime-logs/
 
 # Never commit real user exports, audio, consent evidence, or production backups.
 data/
