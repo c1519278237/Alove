@@ -23,10 +23,15 @@ void main() {
 // which used to clear the SMS-code state as soon as a request started.
 final _routerProvider = Provider<GoRouter>((ref) {
   final router = GoRouter(
-    initialLocation: '/login',
+    initialLocation: '/loading',
     redirect: (context, state) {
       final session = ref.read(sessionProvider);
-      if (session.loading) return '/loading';
+      // Authentication actions also use `loading`. Keep the login route alive
+      // while requesting/verifying an SMS code so its form state is preserved.
+      // The dedicated loading route is only needed during app restoration.
+      if (session.loading) {
+        return state.matchedLocation == '/login' ? null : '/loading';
+      }
       if (!session.isAuthenticated) return '/login';
       if (!session.hasFamily) return '/family-setup';
       if (state.matchedLocation == '/login' ||
